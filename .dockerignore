@@ -1,0 +1,36 @@
+# Build context is the repo root — keep it small and keep secrets out.
+
+node_modules
+**/node_modules
+
+# Build output is produced inside the image, never copied in.
+dist
+**/dist
+**/.vite
+**/vite.config.ts.timestamp-*
+
+# Secrets. Config is injected at runtime via env vars / --env-file.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# The database is a mounted volume, never baked into the image.
+apps/api/database
+
+# apps/web and packages/shared are both required at build time — the image
+# serves the built bundle, and the shared types are outside apps/api. Only their
+# build output and deps are excluded (covered by the dist/node_modules rules).
+
+.git
+.github
+.gitignore
+*.md
+!README.md
+coverage
+**/*.log
+.DS_Store
+.idea
+.vscode

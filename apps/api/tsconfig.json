@@ -1,0 +1,38 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "lib": ["ES2022"],
+    "types": ["node"],
+
+    /* Nest's DI reads parameter types at runtime from emitted metadata. */
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+
+    /*
+     * rootDir stays inside this app so the output is a flat dist/main.js.
+     * Importing @scrapyard/shared from outside rootDir is only legal because
+     * the target is a .d.ts — TypeScript exempts declaration files from the
+     * containment check, and they emit nothing.
+     */
+    "rootDir": "src",
+    "outDir": "dist",
+
+    /*
+     * Forces `import type` for type-only imports. Essential here: esbuild (via
+     * tsx and Vite) transpiles file-by-file and cannot tell a type import from
+     * a value one, so a plain `import { UserRecord }` would survive into the
+     * output and fail at runtime with "module not found".
+     */
+    "verbatimModuleSyntax": false,
+    "isolatedModules": true,
+
+    "sourceMap": true,
+    "removeComments": true,
+    "incremental": true,
+    "tsBuildInfoFile": "./dist/.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["dist", "node_modules"]
+}

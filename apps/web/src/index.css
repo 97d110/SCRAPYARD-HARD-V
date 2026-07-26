@@ -1,0 +1,371 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===========================================================================
+   Scrapyard design tokens
+   Theme: BlazeRush (chunky toy-futurist combat racer, three planets, boost
+   arrows, sparks) filtered through a sci-fi neon lens. Deep space asphalt,
+   hot blaze orange against cold plasma cyan, everything glowing.
+   =========================================================================== */
+
+:root {
+  --void: #04050c;
+  --deep: #080b16;
+  --panel: #0d1122;
+  --rail: #161c33;
+  --hairline: #222a48;
+
+  --blaze: #ff6a00;
+  --blaze-bright: #ffb020;
+  --plasma: #00e5ff;
+  --magenta: #ff2d95;
+  --toxic: #b6ff3c;
+  --violet: #7c5cff;
+
+  --text: #e8edff;
+  --text-dim: #8f9bc4;
+  --text-faint: #5b6688;
+
+  /* Overridden per-user so a racer's accent tints their own row/card. */
+  --glow: var(--plasma);
+
+  /* Chrome heights, used for sticky offsets and scroll padding. */
+  --ticker-h: 44px;
+  --topbar-h: 64px;
+
+  color-scheme: dark;
+}
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-void font-body text-[var(--text)] antialiased;
+    /* Two soft planet-glows bleeding in from the corners: hot and cold. */
+    background-image:
+      radial-gradient(1200px 620px at 12% -8%, rgb(255 106 0 / 0.16), transparent 62%),
+      radial-gradient(1000px 560px at 92% 4%, rgb(0 229 255 / 0.14), transparent 60%),
+      radial-gradient(1400px 800px at 50% 118%, rgb(124 92 255 / 0.14), transparent 66%);
+    background-attachment: fixed;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  ::selection {
+    background: rgb(255 106 0 / 0.35);
+    color: #fff;
+  }
+
+  /* Thin neon scrollbar. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--deep);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, var(--blaze), var(--magenta));
+    border-radius: 99px;
+    border: 2px solid var(--deep);
+  }
+
+  h1, h2, h3, h4 {
+    @apply font-display tracking-wide;
+  }
+
+  /* Fluid type so the same layout reads well on a phone and a 4K wall. */
+  h1 {
+    font-size: clamp(1.75rem, 1.1rem + 2.6vw, 4rem);
+    line-height: 1.02;
+  }
+  h2 {
+    font-size: clamp(1.15rem, 0.95rem + 1vw, 2rem);
+    line-height: 1.1;
+  }
+}
+
+@layer components {
+  /* --- Surfaces ---------------------------------------------------------- */
+
+  /* Holographic panel: clipped corners like a HUD plate, hairline border,
+     inner sheen, and a soft accent glow driven by --glow. */
+  .panel {
+    position: relative;
+    background:
+      linear-gradient(180deg, rgb(255 255 255 / 0.045), rgb(255 255 255 / 0) 42%),
+      linear-gradient(180deg, var(--panel), #0a0e1c);
+    border: 1px solid var(--hairline);
+    box-shadow:
+      inset 0 1px 0 0 rgb(255 255 255 / 0.06),
+      0 24px 60px -30px #000,
+      0 0 40px -22px var(--glow);
+    clip-path: polygon(
+      14px 0, 100% 0, 100% calc(100% - 14px),
+      calc(100% - 14px) 100%, 0 100%, 0 14px
+    );
+  }
+
+  /* Accent hairline running along the panel's top edge. */
+  .panel-lit::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--glow), transparent);
+    opacity: 0.75;
+  }
+
+  .panel-tight {
+    clip-path: polygon(
+      8px 0, 100% 0, 100% calc(100% - 8px),
+      calc(100% - 8px) 100%, 0 100%, 0 8px
+    );
+  }
+
+  /* Animated conic ring — used on the Add Score button and unlocked badges. */
+  .ring-spin::after {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border-radius: inherit;
+    padding: 2px;
+    background: conic-gradient(
+      from var(--ring-angle, 0deg),
+      transparent 0deg, var(--glow) 60deg, transparent 140deg,
+      transparent 200deg, var(--glow) 260deg, transparent 340deg
+    );
+    -webkit-mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+    animation: ring-rotate 3.2s linear infinite;
+    pointer-events: none;
+  }
+
+  /* --- Type ------------------------------------------------------------- */
+
+  .neon {
+    color: #fff;
+    text-shadow:
+      0 0 6px var(--glow),
+      0 0 22px var(--glow),
+      0 0 48px color-mix(in oklab, var(--glow) 55%, transparent);
+  }
+
+  .neon-soft {
+    text-shadow: 0 0 12px color-mix(in oklab, var(--glow) 70%, transparent);
+  }
+
+  /* Chunky BlazeRush-style stencil heading with a hot inner gradient. */
+  .headline {
+    @apply font-display font-black uppercase;
+    background: linear-gradient(180deg, #fff 8%, var(--blaze-bright) 52%, var(--blaze) 92%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    filter: drop-shadow(0 0 18px rgb(255 106 0 / 0.45));
+    letter-spacing: 0.02em;
+  }
+
+  .headline-cold {
+    background: linear-gradient(180deg, #fff 8%, var(--plasma) 55%, #0093ad 95%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    filter: drop-shadow(0 0 18px rgb(0 229 255 / 0.4));
+  }
+
+  .label {
+    @apply font-display text-[0.6rem] font-bold uppercase tracking-[0.28em] text-[var(--text-dim)];
+  }
+
+  .stat-number {
+    @apply font-display font-black tabular-nums;
+  }
+
+  /* --- Controls ---------------------------------------------------------- */
+
+  .btn {
+    @apply relative inline-flex select-none items-center justify-center gap-2
+           font-display text-xs font-bold uppercase tracking-[0.18em]
+           transition-all duration-200 ease-out;
+    padding: 0.7rem 1.25rem;
+    clip-path: polygon(
+      10px 0, 100% 0, 100% calc(100% - 10px),
+      calc(100% - 10px) 100%, 0 100%, 0 10px
+    );
+  }
+
+  .btn-primary {
+    background: linear-gradient(135deg, var(--blaze), #ff2d95 130%);
+    color: #fff;
+    box-shadow: 0 0 0 1px rgb(255 255 255 / 0.14), 0 10px 34px -12px var(--blaze);
+  }
+  .btn-primary:hover {
+    filter: brightness(1.14) saturate(1.1);
+    box-shadow: 0 0 0 1px rgb(255 255 255 / 0.22), 0 14px 44px -10px var(--blaze);
+    transform: translateY(-1px);
+  }
+  .btn-primary:active {
+    transform: translateY(1px) scale(0.985);
+  }
+
+  .btn-ghost {
+    background: rgb(255 255 255 / 0.03);
+    border: 1px solid var(--hairline);
+    color: var(--text);
+  }
+  .btn-ghost:hover {
+    border-color: color-mix(in oklab, var(--glow) 60%, var(--hairline));
+    background: rgb(255 255 255 / 0.06);
+    box-shadow: 0 0 26px -12px var(--glow);
+  }
+
+  .btn:disabled {
+    @apply cursor-not-allowed opacity-40;
+    filter: grayscale(0.6);
+    transform: none;
+  }
+
+  .field {
+    @apply w-full bg-[#070a14] px-3 py-2.5 font-body text-sm text-[var(--text)]
+           outline-none transition placeholder:text-[var(--text-faint)];
+    border: 1px solid var(--hairline);
+    border-radius: 2px;
+  }
+  .field:focus {
+    border-color: var(--glow);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--glow) 18%, transparent);
+  }
+
+  /* --- Track furniture --------------------------------------------------- */
+
+  /* Perspective grid floor, drifting toward the viewer. */
+  .grid-floor {
+    background-image:
+      linear-gradient(to right, rgb(0 229 255 / 0.09) 1px, transparent 1px),
+      linear-gradient(to bottom, rgb(0 229 255 / 0.09) 1px, transparent 1px);
+    background-size: 56px 56px;
+    animation: grid-drift 14s linear infinite;
+  }
+
+  /* CRT scanline overlay. Very low opacity — texture, not gimmick. */
+  .scanlines::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      180deg, transparent 0 2px, rgb(0 0 0 / 0.26) 2px 3px
+    );
+    mix-blend-mode: overlay;
+    opacity: 0.5;
+  }
+
+  /* Rank medal chips for the podium. */
+  .rank-1 { --glow: #ffb020; }
+  .rank-2 { --glow: #cfe3ff; }
+  .rank-3 { --glow: #ff8a3d; }
+
+  .divider-neon {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--hairline) 18%, var(--hairline) 82%, transparent);
+  }
+}
+
+@layer utilities {
+  .glow-blaze { --glow: var(--blaze); }
+  .glow-plasma { --glow: var(--plasma); }
+  .glow-magenta { --glow: var(--magenta); }
+  .glow-toxic { --glow: var(--toxic); }
+  .glow-violet { --glow: var(--violet); }
+
+  /* Content width ladder: comfortable on laptops, uses the space on walls. */
+  .shell {
+    width: 100%;
+    margin-inline: auto;
+    padding-inline: clamp(1rem, 0.5rem + 2vw, 3rem);
+    max-width: 1400px;
+  }
+  @media (min-width: 1920px) { .shell { max-width: 1720px; } }
+  @media (min-width: 2560px) { .shell { max-width: 2200px; } }
+
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { scrollbar-width: none; }
+}
+
+/* --- Keyframes not expressible in the Tailwind config --------------------- */
+
+@property --ring-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes ring-rotate {
+  to { --ring-angle: 360deg; }
+}
+
+@keyframes grid-drift {
+  from { background-position: 0 0; }
+  to { background-position: 0 112px; }
+}
+
+/* Arthur crossing the screen after a score lands. */
+@keyframes arthur-cross {
+  0%   { transform: translate3d(-30vw, 0, 0) rotate(-3deg); opacity: 0; }
+  8%   { opacity: 1; }
+  50%  { transform: translate3d(45vw, -8vh, 0) rotate(2deg); }
+  92%  { opacity: 1; }
+  100% { transform: translate3d(130vw, 4vh, 0) rotate(-2deg); opacity: 0; }
+}
+
+/* Exhaust streaks trailing the ship. */
+@keyframes streak {
+  0%   { transform: scaleX(0.2); opacity: 0; }
+  30%  { transform: scaleX(1); opacity: 0.9; }
+  100% { transform: scaleX(0.1) translateX(-40px); opacity: 0; }
+}
+
+@keyframes spark-fly {
+  0%   { transform: translate(0, 0) scale(1); opacity: 1; }
+  100% { transform: translate(var(--dx, 40px), var(--dy, -40px)) scale(0); opacity: 0; }
+}
+
+@keyframes shockwave {
+  0%   { transform: scale(0.2); opacity: 0.85; border-width: 6px; }
+  100% { transform: scale(3.4); opacity: 0; border-width: 1px; }
+}
+
+/*
+ * `rise` is declared in tailwind.config.js too, but Tailwind only emits a
+ * keyframes block when the matching `animate-rise` utility appears in the
+ * scanned content — and we always reference it via an inline `animation`
+ * string instead. Defining it here is what makes those references real.
+ */
+@keyframes rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Respect the user's motion preference — kill the ambient loops, keep the
+   one-shot feedback animations that carry meaning. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .grid-floor,
+  .scanlines::after {
+    animation: none;
+  }
+}

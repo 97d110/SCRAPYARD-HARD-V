@@ -1,0 +1,29 @@
+{
+  "//": [
+    "Options shared by every app. Each app's tsconfig extends this and adds only",
+    "what differs (module system, JSX, lib, rootDir).",
+    "",
+    "The `paths` entry is what makes `@scrapyard/shared` resolve without a build",
+    "step: the target is a .d.ts containing only types, so imports of it erase at",
+    "compile time and nothing needs to resolve the specifier at runtime."
+  ],
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@scrapyard/shared": ["packages/shared/src/index.d.ts"]
+    },
+
+    "target": "ES2022",
+    "strict": true,
+    "strictNullChecks": true,
+    "noImplicitAny": true,
+    "strictBindCallApply": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true
+  }
+}

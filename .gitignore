@@ -1,0 +1,39 @@
+node_modules/
+dist/
+build/
+.env
+.env.local
+*.log
+.DS_Store
+.vite/
+coverage/
+# Vite writes these next to its config when bundling it. The extension is .mts
+# here, so match both rather than just .ts.
+vite.config.*.timestamp-*
+.DS_Store
+**/.DS_Store
+
+# Login background media — large binaries, supplied per deployment.
+apps/api/public/login/*
+!apps/api/public/login/README.md
+
+# Lo-fi JSON database — runtime data is local, never committed.
+apps/api/database/users/*.json
+apps/api/database/scores/*.json
+apps/api/database/index/*.json
+apps/api/database/content/*.json
+!apps/api/database/**/.gitkeep
+
+# --- OpenTofu / Terraform ---------------------------------------------------
+# State contains the Google client secret, JWT secret and tunnel token in
+# PLAINTEXT. Never commit it, even though the real state lives in GCS.
+infra/.terraform/
+infra/.terraform.lock.hcl
+infra/*.tfstate
+infra/*.tfstate.*
+infra/*.tfplan
+infra/.build/
+# Real values — only the .example files are tracked.
+infra/terraform.tfvars
+infra/*.auto.tfvars
+infra/backend.hcl

@@ -1,0 +1,13 @@
+{
+  "name": "scrapyard-billing-killswitch",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Detaches the billing account when the budget is exceeded.",
+  "main": "index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@google-cloud/billing": "^4.4.0"
+  }
+}
