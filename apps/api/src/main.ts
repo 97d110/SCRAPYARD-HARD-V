@@ -50,10 +50,18 @@ async function bootstrap(): Promise<void> {
    * Off by default: blindly trusting X-Forwarded-* when nothing sits in front
    * would let a client spoof its own IP.
    */
-  const trustProxy = process.env.TRUST_PROXY;
+  const trustProxy = process.env.TRUST_PROXY?.trim();
   if (trustProxy && trustProxy !== 'false') {
-    // 'true' / a hop count / a subnet — passed straight to Express.
-    app.set('trust proxy', /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy);
+    /*
+     * Three accepted shapes, and the order matters. Express hands any *other*
+     * string to proxy-addr, which parses it as a list of IPs or subnets and
+     * throws on anything else — so 'true' must be converted to a real boolean
+     * rather than passed through. Render sets this from render.yaml, where
+     * every value arrives as a string.
+     */
+    const value: boolean | number | string =
+      trustProxy === 'true' ? true : /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy;
+    app.set('trust proxy', value);
     logger.log(`Trusting proxy headers: ${trustProxy}`);
   }
 

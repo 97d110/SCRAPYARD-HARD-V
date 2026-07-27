@@ -1,24 +1,24 @@
 /**
- * Seeds the JSON database with demo racers and a scatter of wins, so the
- * leaderboard, streaks and achievements have something to show before real
- * SSO users exist.
+ * Seeds MongoDB with demo racers and a scatter of wins, so the leaderboard,
+ * streaks and achievements have something to show before real SSO users exist.
  *
- *   npm run seed
+ *   MONGODB_URI="mongodb+srv://..." npm run seed
  *
- * Seeded ids are prefixed `seed-`, so they're easy to spot and delete:
- *   rm apps/api/database/users/seed-*.json && curl -XPOST .../scores/rebuild?confirm=yes
+ * Seeded ids are prefixed `seed-`, so they're easy to spot and remove:
+ *   db.users.deleteMany({ _id: /^seed-/ })
+ *   db.wins.deleteMany({ userId: /^seed-/ })
+ *
+ * Re-running is safe: seeded racers and their wins are cleared first, and
+ * nothing else is touched.
  */
 import { randomUUID } from 'crypto';
-import { JsonStoreService } from './json-store.service';
-import { IndexService } from './index.service';
-import type { UserRecord, WinEntry } from '@scrapyard/shared';
-import { dayKey, monthKey, shiftDayKey } from '../common/period.util';
+import { MongoClient } from 'mongodb';
+import type { UserDoc, WinDoc } from './mongo.service';
+import { dayKey, shiftDayKey } from '../common/period.util';
 import { ACCENT_COLORS, RACERS } from '../users/users.service';
-import { ContentService } from '../content/content.service';
+import { DEFAULT_PUNS } from '../content/content.service';
 
-const DOMAIN = (process.env.ALLOWED_WORKSPACE_DOMAINS ?? 'cytactic.com')
-  .split(',')[0]
-  .trim();
+const DOMAIN = (process.env.ALLOWED_WORKSPACE_DOMAINS ?? 'cytactic.com').split(',')[0].trim();
 
 interface SeedSpec {
   slug: string;
@@ -82,39 +82,11 @@ const SEEDS: SeedSpec[] = [
   },
 ];
 
-function buildUser(spec: SeedSpec, position: number): UserRecord {
+function buildUser(spec: SeedSpec, position: number): UserDoc {
   const id = `seed-${spec.slug}`;
-  const today = dayKey();
-  const wins: WinEntry[] = [];
-  const daily: Record<string, number> = {};
-  const monthly: Record<string, number> = {};
-
-  for (const [daysAgo, count] of spec.pattern) {
-    const day = shiftDayKey(today, -daysAgo);
-    const month = day.slice(0, 7);
-    daily[day] = (daily[day] ?? 0) + count;
-    monthly[month] = (monthly[month] ?? 0) + count;
-
-    for (let i = 0; i < count; i += 1) {
-      // Spread wins across the evening; one lands after 22:00 for Good evening!
-      const hour = 17 + ((position + i + daysAgo) % 7);
-      wins.push({
-        id: randomUUID(),
-        at: new Date(`${day}T${String(hour).padStart(2, '0')}:${String((i * 17) % 60).padStart(2, '0')}:00.000Z`).toISOString(),
-        monthKey: month,
-        dayKey: day,
-        awardedBy: 'seed-amit',
-      });
-    }
-  }
-
-  // Newest first, matching how the API stores them.
-  wins.sort((a, b) => b.at.localeCompare(a.at));
-  const allTime = Object.values(daily).reduce((sum, n) => sum + n, 0);
-  const createdAt = new Date(Date.now() - (90 - position) * 86_400_000).toISOString();
-
+  const now = new Date().toISOString();
   return {
-    id,
+    _id: id,
     googleId: id,
     email: `${spec.slug}@${DOMAIN}`,
     domain: DOMAIN,
@@ -126,89 +98,89 @@ function buildUser(spec: SeedSpec, position: number): UserRecord {
     tagline: spec.tagline,
     favoriteRacer: RACERS[position % RACERS.length],
     accentColor: ACCENT_COLORS[position % ACCENT_COLORS.length],
-    createdAt,
-    updatedAt: new Date().toISOString(),
-    lastLoginAt: new Date().toISOString(),
-    scores: { allTime, monthly, daily },
-    wins,
+    createdAt: new Date(Date.now() - (90 - position) * 86_400_000).toISOString(),
+    updatedAt: now,
+    lastLoginAt: now,
   };
 }
 
+function buildWins(spec: SeedSpec, position: number): WinDoc[] {
+  const id = `seed-${spec.slug}`;
+  const today = dayKey();
+  const out: WinDoc[] = [];
+
+  for (const [daysAgo, count] of spec.pattern) {
+    const day = shiftDayKey(today, -daysAgo);
+    for (let i = 0; i < count; i += 1) {
+      // Spread across the evening; one lands after 22:00 for "Good evening!".
+      const hour = 17 + ((position + i + daysAgo) % 7);
+      const minute = (i * 17) % 60;
+      out.push({
+        _id: randomUUID(),
+        userId: id,
+        at: new Date(
+          `${day}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00.000Z`,
+        ),
+        monthKey: day.slice(0, 7),
+        dayKey: day,
+        awardedBy: 'seed-amit',
+      });
+    }
+  }
+  return out;
+}
+
 async function main(): Promise<void> {
-  const store = new JsonStoreService();
-  const index = new IndexService(store);
-  const content = new ContentService(store, index);
-
-  await store.ensureLayout();
-  await content.onModuleInit();
-
-  const users = SEEDS.map(buildUser);
-  for (const user of users) {
-    await store.write(`users/${user.id}.json`, user);
+  const uri = process.env.MONGODB_URI;
+  if (!uri) {
+    console.error('MONGODB_URI is not set. Point it at your Atlas cluster or a local mongod.');
+    process.exit(1);
   }
 
-  // Rebuild every derived board from the freshly written user files.
-  const months = new Set<string>([monthKey()]);
-  const days = new Set<string>([dayKey()]);
-  for (const user of users) {
-    Object.keys(user.scores.monthly).forEach((key) => months.add(key));
-    Object.keys(user.scores.daily).forEach((key) => days.add(key));
-  }
+  const client = new MongoClient(uri);
+  await client.connect();
+  const db = client.db(process.env.MONGODB_DB || 'scrapyard');
 
-  const build = (kind: 'all-time' | 'monthly' | 'daily', key: string) => {
-    const pointsOf = (user: UserRecord): number =>
-      kind === 'all-time'
-        ? user.scores.allTime
-        : kind === 'monthly'
-          ? (user.scores.monthly[key] ?? 0)
-          : (user.scores.daily[key] ?? 0);
+  const users = db.collection<UserDoc>('users');
+  const wins = db.collection<WinDoc>('wins');
+  const content = db.collection('content');
 
-    const ranked = [...users]
-      .map((user) => ({ user, points: pointsOf(user) }))
-      .sort((a, b) => b.points - a.points || a.user.displayName.localeCompare(b.user.displayName));
+  // Idempotent: clear only what a previous seed created.
+  await users.deleteMany({ _id: { $regex: '^seed-' } });
+  await wins.deleteMany({ userId: { $regex: '^seed-' } });
 
-    let lastPoints: number | null = null;
-    let lastRank = 0;
-    const entries = ranked.map((row, i) => {
-      const tied = lastPoints === row.points;
-      const rank = tied ? lastRank : i + 1;
-      if (!tied) {
-        lastRank = rank;
-        lastPoints = row.points;
-      }
-      return {
-        rank,
-        userId: row.user.id,
-        displayName: row.user.displayName,
-        avatarUrl: row.user.avatarUrl,
-        accentColor: row.user.accentColor,
-        favoriteRacer: row.user.favoriteRacer,
-        points: row.points,
-        tied,
-      };
-    });
+  const userDocs = SEEDS.map(buildUser);
+  const winDocs = SEEDS.flatMap(buildWins);
 
-    return {
-      kind,
-      key,
-      label: kind === 'all-time' ? 'All Time' : key,
-      generatedAt: new Date().toISOString(),
-      totalPoints: entries.reduce((sum, e) => sum + e.points, 0),
-      entries,
-    };
-  };
+  await users.insertMany(userDocs);
+  await wins.insertMany(winDocs);
 
-  await store.write('scores/all-time.json', build('all-time', 'all-time'));
-  for (const key of months) await store.write(`scores/monthly-${key}.json`, build('monthly', key));
-  for (const key of days) await store.write(`scores/daily-${key}.json`, build('daily', key));
+  // Puns, only if the document doesn't exist yet.
+  const now = new Date().toISOString();
+  await content.updateOne(
+    { _id: 'puns' as never },
+    {
+      $setOnInsert: {
+        label: 'Banner Puns',
+        updatedAt: now,
+        items: DEFAULT_PUNS.map((text) => ({
+          id: randomUUID(),
+          text,
+          enabled: true,
+          createdAt: now,
+          updatedAt: now,
+        })),
+      },
+    },
+    { upsert: true },
+  );
 
-  const written = await index.rebuild();
+  console.log(`Seeded ${userDocs.length} racers and ${winDocs.length} wins.`);
+  console.log(`Database: ${db.databaseName}`);
+  console.log('\nNote: seeded racers cannot sign in — they have no real Google account.');
+  console.log("Remove them with: db.users.deleteMany({_id:/^seed-/}); db.wins.deleteMany({userId:/^seed-/})");
 
-  console.log(`Seeded ${users.length} racers.`);
-  console.log(`Scoreboards: ${written.counts.scoreboards}`);
-  console.log(`Database root: ${store.rootDir}`);
-  console.log('\nNote: seeded users cannot sign in — they have no real Google account.');
-  console.log('Remove them with: rm apps/api/database/users/seed-*.json');
+  await client.close();
 }
 
 void main().catch((error) => {

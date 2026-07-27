@@ -69,9 +69,8 @@ export class AdminContentController {
   @Get('types')
   async types(): Promise<ContentTypeDescriptor[]> {
     const summary = await this.exporter.summary();
-    const fileCount =
-      summary.users + summary.scoreboards + summary.content + summary.index;
-    return this.content.describeTypes(fileCount);
+    const documents = summary.users + summary.wins + summary.content;
+    return this.content.describeTypes(documents);
   }
 
   /** Read-only previews so the non-editable cards still show something useful. */

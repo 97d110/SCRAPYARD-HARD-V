@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Crown, Minus, Trophy } from 'lucide-react';
 import { Avatar, Label, Panel } from './ui/primitives';
-import type { LeaderboardEntry, ScoreboardFile } from '@scrapyard/shared';
+import type { LeaderboardEntry, Scoreboard } from '@scrapyard/shared';
 
 /**
  * The leaderboard. Podium cards for the top three, then a dense rank list.
@@ -13,7 +13,7 @@ export function LeaderboardTable({
   highlightUserId,
   emptyHint,
 }: {
-  board: ScoreboardFile;
+  board: Scoreboard;
   highlightUserId?: string;
   emptyHint?: string;
 }) {

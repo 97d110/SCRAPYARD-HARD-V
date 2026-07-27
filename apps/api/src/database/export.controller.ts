@@ -17,9 +17,8 @@ export class ExportController {
   @Get('summary')
   async summary(): Promise<{
     users: number;
-    scoreboards: number;
+    wins: number;
     content: number;
-    index: number;
     totalBytes: number;
     filename: string;
   }> {

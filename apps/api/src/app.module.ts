@@ -1,37 +1,28 @@
-import { Controller, Get, Module, UseGuards } from '@nestjs/common';
+import { Controller, Get, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { resolve } from 'path';
 import { DatabaseModule } from './database/database.module';
-import { IndexService } from './database/index.service';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { ScoresModule } from './scores/scores.module';
 import { ContentModule } from './content/content.module';
 import { WebModule } from './web/web.module';
-import { AdminGuard, JwtAuthGuard } from './auth/guards';
 import { dayKey, monthKey, timezoneName } from './common/period.util';
-import type { IndexFile } from '@scrapyard/shared';
 
 @Controller()
 class MetaController {
-  constructor(private readonly index: IndexService) {}
-
-  /** Public liveness probe. Deliberately leaks nothing but clock config. */
+  /** Public liveness probe. Deliberately leaks nothing but clock and db name. */
   @Get('health')
-  health(): { status: 'ok'; timezone: string; day: string; month: string } {
-    return { status: 'ok', timezone: timezoneName(), day: dayKey(), month: monthKey() };
+  health(): { status: 'ok'; timezone: string; day: string; month: string; database: string } {
+    return {
+      status: 'ok',
+      timezone: timezoneName(),
+      day: dayKey(),
+      month: monthKey(),
+      database: process.env.MONGODB_DB || 'scrapyard',
+    };
   }
 
-  /**
-   * The database's own table of contents. Handy for debugging by eye — but it
-   * lists every racer's email address, so it sits behind the admin guard rather
-   * than being public.
-   */
-  @Get('database/index')
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  async databaseIndex(): Promise<IndexFile> {
-    return this.index.read();
-  }
 }
 
 @Module({

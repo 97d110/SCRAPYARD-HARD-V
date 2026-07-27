@@ -16,24 +16,3 @@ vite.config.*.timestamp-*
 # Login background media — large binaries, supplied per deployment.
 apps/api/public/login/*
 !apps/api/public/login/README.md
-
-# Lo-fi JSON database — runtime data is local, never committed.
-apps/api/database/users/*.json
-apps/api/database/scores/*.json
-apps/api/database/index/*.json
-apps/api/database/content/*.json
-!apps/api/database/**/.gitkeep
-
-# --- OpenTofu / Terraform ---------------------------------------------------
-# State contains the Google client secret, JWT secret and tunnel token in
-# PLAINTEXT. Never commit it, even though the real state lives in GCS.
-infra/.terraform/
-infra/.terraform.lock.hcl
-infra/*.tfstate
-infra/*.tfstate.*
-infra/*.tfplan
-infra/.build/
-# Real values — only the .example files are tracked.
-infra/terraform.tfvars
-infra/*.auto.tfvars
-infra/backend.hcl

@@ -4,28 +4,20 @@
   "private": true,
   "description": "Scrapyard \u2014 a BlazeRush-themed neon leaderboard for the crew.",
   "engines": {
-    "node": ">=20"
+    "node": ">=20 <23"
   },
   "//": [
-    "ONE manifest for the whole repo. There is no `workspaces` key and no",
-    "per-app package.json \u2014 apps/* and packages/* are plain folders with their",
-    "own tsconfig, resolved through the `paths` mapping in tsconfig.base.json.",
+    "ONE manifest for the whole repo \u2014 no workspaces. apps/* and packages/* are",
+    "plain folders with their own tsconfig, joined by the `paths` mapping in",
+    "tsconfig.base.json.",
     "",
-    "The dependencies / devDependencies split is doing real work here, and is",
-    "what replaces per-workspace pruning:",
-    "",
-    "  dependencies    = required by `node apps/api/dist/main.js` at runtime.",
-    "  devDependencies = everything else. That INCLUDES react, react-router and",
-    "                    lucide-react, because Vite bundles them into the client",
-    "                    asset at build time \u2014 Node never requires them.",
-    "",
-    "So `npm ci --omit=dev` installs exactly the API's runtime closure, which is",
-    "what the Docker image ships. Front-end tree-shaking is Rollup's job and is",
-    "already automatic; this split is the server-side equivalent.",
+    "dependencies    = required at runtime by `node apps/api/dist/main.js`.",
+    "devDependencies = everything else, including react and vite \u2014 Vite bundles",
+    "                  them into the client asset at build time and Node never",
+    "                  requires them. Render runs `npm ci` then prunes with this.",
     "",
     "ts-node, not tsx/esbuild: Nest's DI reads constructor parameter types from",
-    "`emitDecoratorMetadata` output, which esbuild cannot produce. tsx fails at",
-    "transform time on the parameter decorators and would fail at runtime on DI."
+    "`emitDecoratorMetadata`, which esbuild cannot emit."
   ],
   "scripts": {
     "dev": "npm-run-all --parallel dev:api dev:web",
@@ -54,6 +46,7 @@
     "class-validator": "^0.14.1",
     "cookie-parser": "^1.4.7",
     "express": "^4.21.2",
+    "mongodb": "^6.21.0",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "passport-jwt": "^4.0.1",

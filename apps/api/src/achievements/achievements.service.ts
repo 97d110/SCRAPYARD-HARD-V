@@ -1,18 +1,19 @@
 import { Injectable } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
+import { MongoService } from '../database/mongo.service';
+import { ScoreboardRepository } from '../database/scoreboard.repository';
 import type {
   AchievementDef,
   AchievementState,
   ProfileBundle,
   StreakSummary,
-  UserRecord,
+  WinEntry,
 } from '@scrapyard/shared';
-import { dayKey, dayKeyDiff, hourOfDay, monthKey, recentDayKeys } from '../common/period.util';
+import { dayKey, dayKeyDiff, hourOfDay, recentDayKeys } from '../common/period.util';
 
 /**
- * Achievements are entirely *derived* from the user files — nothing is stored.
- * That means we can add, retune or remove a badge without a migration, which
- * is the whole point of going lo-fi.
+ * Achievements are entirely *derived* — nothing about them is stored. Adding,
+ * retuning or removing a badge needs no migration.
  */
 export const ACHIEVEMENTS: AchievementDef[] = [
   { id: 'first_blood', name: 'Ignition', description: 'Record your first win.', tier: 'bronze', icon: 'flame' },
@@ -35,9 +36,16 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   { id: 'all_rounder', name: 'All-Round', description: 'Win in 3 different calendar months.', tier: 'gold', icon: 'globe' },
 ];
 
+/** Per-day win counts, `YYYY-MM-DD` -> count. */
+type DayCounts = Map<string, number>;
+
 @Injectable()
 export class AchievementsService {
-  constructor(private readonly users: UsersService) {}
+  constructor(
+    private readonly users: UsersService,
+    private readonly mongo: MongoService,
+    private readonly scoreboards: ScoreboardRepository,
+  ) {}
 
   definitions(): AchievementDef[] {
     return ACHIEVEMENTS;
@@ -45,58 +53,119 @@ export class AchievementsService {
 
   /** Everything the profile page needs, in one shot. */
   async buildProfile(userId: string): Promise<ProfileBundle> {
-    const all = await this.users.findAllRaw();
-    const user = all.find((candidate) => candidate.id === userId) ?? (await this.users.requireRaw(userId));
+    const record = await this.users.requireRaw(userId);
+    const wins = await this.mongo.wins();
 
-    const leaders = this.dailyLeadersByDay(all);
-    const streaks = this.computeStreaks(user, leaders);
+    const [myDays, allDays, recentDocs, monthCount, scores] = await Promise.all([
+      this.dayCountsFor(userId),
+      this.dayCountsByUser(),
+      // Wins are indexed on (userId, at), so this is a covered range scan.
+      wins.find({ userId }).sort({ at: -1 }).limit(200).toArray(),
+      wins.distinct('monthKey', { userId }),
+      this.scoreboards.scoresByUser(),
+    ]);
+
+    const recentWins: WinEntry[] = recentDocs.map((doc) => ({
+      id: doc._id,
+      userId: doc.userId,
+      at: doc.at.toISOString(),
+      monthKey: doc.monthKey,
+      dayKey: doc.dayKey,
+      awardedBy: doc.awardedBy,
+      ...(doc.note ? { note: doc.note } : {}),
+    }));
+
+    const leaders = this.dailyLeaders(allDays);
+    const streaks = this.computeStreaks(userId, myDays, leaders, recentWins);
+    const mine = scores.get(userId);
+    const allTime = mine?.allTime ?? 0;
 
     return {
-      user: this.users.toPublic(user),
+      user: this.users.toPublic(record, mine),
       streaks,
-      achievements: this.evaluate(user, streaks, all),
+      achievements: this.evaluate({
+        allTime,
+        dayCounts: myDays,
+        monthsWon: monthCount.length,
+        recentWins,
+        streaks,
+        monthlyLeader: this.isMonthlyLeader(userId, scores),
+      }),
       ranks: {
-        allTime: this.rankOf(user, all, (candidate) => candidate.scores.allTime),
-        monthly: this.rankOf(user, all, (candidate) => candidate.scores.monthly[monthKey()] ?? 0),
-        daily: this.rankOf(user, all, (candidate) => candidate.scores.daily[dayKey()] ?? 0),
+        allTime: this.rank(userId, scores, (s) => s.allTime),
+        monthly: this.rank(userId, scores, (s) => s.month),
+        daily: this.rank(userId, scores, (s) => s.day),
       },
-      recentWins: user.wins.slice(0, 25),
-      activity: this.activityWindow(user, 90),
+      recentWins: recentWins.slice(0, 25),
+      activity: this.activityWindow(myDays, 90),
     };
   }
 
-  /** 'YYYY-MM-DD' -> set of user ids that tied for #1 that day. */
-  private dailyLeadersByDay(all: UserRecord[]): Map<string, Set<string>> {
-    const totals = new Map<string, Map<string, number>>();
+  /**
+   * One racer's wins grouped by day.
+   *
+   * The (userId, dayKey) index makes this a covered aggregation — Mongo answers
+   * it from the index without reading any documents.
+   */
+  private async dayCountsFor(userId: string): Promise<DayCounts> {
+    const wins = await this.mongo.wins();
+    const rows = await wins
+      .aggregate<{ _id: string; n: number }>([
+        { $match: { userId } },
+        { $group: { _id: '$dayKey', n: { $sum: 1 } } },
+      ])
+      .toArray();
+    return new Map(rows.map((r) => [r._id, r.n]));
+  }
 
-    for (const user of all) {
-      for (const [day, points] of Object.entries(user.scores.daily)) {
-        if (points <= 0) continue;
+  /** Every racer's wins grouped by day — needed to work out who led each day. */
+  private async dayCountsByUser(): Promise<Map<string, DayCounts>> {
+    const wins = await this.mongo.wins();
+    const rows = await wins
+      .aggregate<{ _id: { userId: string; dayKey: string }; n: number }>([
+        { $group: { _id: { userId: '$userId', dayKey: '$dayKey' }, n: { $sum: 1 } } },
+      ])
+      .toArray();
+
+    const byUser = new Map<string, DayCounts>();
+    for (const row of rows) {
+      const days = byUser.get(row._id.userId) ?? new Map<string, number>();
+      days.set(row._id.dayKey, row.n);
+      byUser.set(row._id.userId, days);
+    }
+    return byUser;
+  }
+
+  /** 'YYYY-MM-DD' -> the set of racers who tied for #1 that day. */
+  private dailyLeaders(byUser: Map<string, DayCounts>): Map<string, Set<string>> {
+    const totals = new Map<string, Map<string, number>>();
+    for (const [userId, days] of byUser) {
+      for (const [day, count] of days) {
+        if (count <= 0) continue;
         if (!totals.has(day)) totals.set(day, new Map());
-        totals.get(day)!.set(user.id, points);
+        totals.get(day)!.set(userId, count);
       }
     }
 
     const leaders = new Map<string, Set<string>>();
-    for (const [day, byUser] of totals) {
-      const best = Math.max(...byUser.values());
+    for (const [day, perUser] of totals) {
+      const best = Math.max(...perUser.values());
       const winners = new Set<string>();
-      for (const [id, points] of byUser) {
-        if (points === best) winners.add(id);
-      }
+      for (const [id, count] of perUser) if (count === best) winners.add(id);
       leaders.set(day, winners);
     }
     return leaders;
   }
 
-  private computeStreaks(user: UserRecord, leaders: Map<string, Set<string>>): StreakSummary {
-    const winDays = Object.entries(user.scores.daily)
-      .filter(([, points]) => points > 0)
-      .map(([day]) => day)
-      .sort();
-
+  private computeStreaks(
+    userId: string,
+    myDays: DayCounts,
+    leaders: Map<string, Set<string>>,
+    recentWins: WinEntry[],
+  ): StreakSummary {
+    const winDays = [...myDays.keys()].sort();
     const leadDays = [...leaders.entries()]
-      .filter(([, ids]) => ids.has(user.id))
+      .filter(([, ids]) => ids.has(userId))
       .map(([day]) => day)
       .sort();
 
@@ -106,13 +175,13 @@ export class AchievementsService {
       currentDailyLeadStreak: this.currentStreak(leadDays),
       longestDailyLeadStreak: this.longestStreak(leadDays),
       daysAsDailyLeader: leadDays.length,
-      lastWinAt: user.wins[0]?.at ?? null,
+      lastWinAt: recentWins[0]?.at ?? null,
     };
   }
 
   /**
-   * A streak stays "alive" if the most recent day is today or yesterday —
-   * you shouldn't lose your streak just because today's race hasn't happened.
+   * A streak stays alive if the most recent day is today or yesterday — you
+   * shouldn't lose it just because today's race hasn't happened yet.
    */
   private currentStreak(sortedDays: string[]): number {
     if (sortedDays.length === 0) return 0;
@@ -140,80 +209,73 @@ export class AchievementsService {
     return best;
   }
 
-  private rankOf(
-    user: UserRecord,
-    all: UserRecord[],
-    pointsOf: (user: UserRecord) => number,
+  private rank(
+    userId: string,
+    scores: Map<string, { allTime: number; month: number; day: number }>,
+    pick: (s: { allTime: number; month: number; day: number }) => number,
   ): number | null {
-    const mine = pointsOf(user);
-    if (mine <= 0) return null;
-    const ahead = all.filter((candidate) => pointsOf(candidate) > mine).length;
+    const mine = scores.get(userId);
+    if (!mine || pick(mine) <= 0) return null;
+    let ahead = 0;
+    for (const [id, s] of scores) if (id !== userId && pick(s) > pick(mine)) ahead += 1;
     return ahead + 1;
   }
 
-  private activityWindow(user: UserRecord, days: number): Record<string, number> {
+  private isMonthlyLeader(
+    userId: string,
+    scores: Map<string, { allTime: number; month: number; day: number }>,
+  ): boolean {
+    const mine = scores.get(userId)?.month ?? 0;
+    if (mine <= 0) return false;
+    for (const s of scores.values()) if (s.month > mine) return false;
+    return true;
+  }
+
+  private activityWindow(days: DayCounts, count: number): Record<string, number> {
     const out: Record<string, number> = {};
-    for (const day of recentDayKeys(days)) {
-      out[day] = user.scores.daily[day] ?? 0;
-    }
+    for (const day of recentDayKeys(count)) out[day] = days.get(day) ?? 0;
     return out;
   }
 
-  private evaluate(
-    user: UserRecord,
-    streaks: StreakSummary,
-    all: UserRecord[],
-  ): AchievementState[] {
-    const allTime = user.scores.allTime;
-    const bestDay = Math.max(0, ...Object.values(user.scores.daily));
-    const monthsWon = Object.values(user.scores.monthly).filter((n) => n > 0).length;
+  private evaluate(input: {
+    allTime: number;
+    dayCounts: DayCounts;
+    monthsWon: number;
+    recentWins: WinEntry[];
+    streaks: StreakSummary;
+    monthlyLeader: boolean;
+  }): AchievementState[] {
+    const { allTime, dayCounts, monthsWon, recentWins, streaks, monthlyLeader } = input;
+    const bestDay = dayCounts.size === 0 ? 0 : Math.max(...dayCounts.values());
 
     /*
-     * Wins are stored newest-first. `findLast` therefore gives us the *oldest*
-     * qualifying win, which is the one that actually unlocked the badge — the
-     * same semantics as the nthWinAt-based rules below.
-     *
-     * The hour must come from the configured timezone, not the server's clock,
-     * so "after dark" agrees with where the day boundary falls.
+     * recentWins is newest-first and capped at 200. `findLast` therefore returns
+     * the *oldest* qualifying win in the window, which is the one that actually
+     * unlocked the badge.
      */
-    const nightWin = findLast(user.wins, (win) => {
+    const nightWin = findLast(recentWins, (win) => {
       const hour = hourOfDay(new Date(win.at));
       return hour >= 22 || hour < 4;
     });
 
-    // Walk pairs looking for a gap of more than 7 days between consecutive wins.
-    const comeback = findLast(user.wins, (win, position) => {
-      const previous = user.wins[position + 1];
+    const comeback = findLast(recentWins, (win, position) => {
+      const previous = recentWins[position + 1];
       return previous ? dayKeyDiff(win.dayKey, previous.dayKey) > 7 : false;
     });
 
-    const month = monthKey();
-    const myMonthly = user.scores.monthly[month] ?? 0;
-    const monthlyLeader =
-      myMonthly > 0 && all.every((candidate) => (candidate.scores.monthly[month] ?? 0) <= myMonthly);
-
     /*
-     * Timestamp of the nth win overall. wins[] is newest-first, so the nth win
-     * sits at index length - n.
-     *
-     * The log is capped at 1000 entries (see ScoresService), so once a racer
-     * passes that the tail is gone and the nth win is no longer recoverable —
-     * we return null rather than confidently pointing at the wrong win.
+     * The win log is capped at 200 for this calculation, so once a racer passes
+     * that we can no longer identify their nth win. Better to report no
+     * timestamp than confidently point at the wrong one.
      */
-    const logIsComplete = user.wins.length === allTime;
+    const logIsComplete = recentWins.length === allTime;
     const nthWinAt = (n: number): string | null => {
       if (!logIsComplete) return null;
-      const index = user.wins.length - n;
-      return index >= 0 ? user.wins[index].at : null;
+      const index = recentWins.length - n;
+      return index >= 0 ? recentWins[index].at : null;
     };
 
-    const rules: Array<{
-      id: string;
-      unlocked: boolean;
-      progress: number;
-      progressLabel: string;
-      unlockedAt: string | null;
-    }> = [
+    const rules = [
       count('first_blood', allTime, 1, 'win', nthWinAt(1)),
       count('wins_10', allTime, 10, 'wins', nthWinAt(10)),
       count('wins_25', allTime, 25, 'wins', nthWinAt(25)),
@@ -256,13 +318,7 @@ function findLast<T>(items: T[], predicate: (item: T, index: number) => boolean)
   return undefined;
 }
 
-function count(
-  id: string,
-  value: number,
-  goal: number,
-  unit: string,
-  unlockedAt: string | null,
-) {
+function count(id: string, value: number, goal: number, unit: string, unlockedAt: string | null) {
   return {
     id,
     unlocked: value >= goal,

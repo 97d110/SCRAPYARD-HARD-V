@@ -1,8 +1,0 @@
-# Copy to backend.hcl and set your bucket name, then:
-#
-#   tofu init -backend-config=backend.hcl
-#
-# Kept out of versions.tf so that file isn't account-specific.
-
-bucket = "scrapyard-prod-tofu-state"
-prefix = "scrapyard/infra"

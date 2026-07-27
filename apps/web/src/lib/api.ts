@@ -6,7 +6,7 @@ import type {
   ProfileBundle,
   PublicUser,
   Pun,
-  ScoreboardFile,
+  Scoreboard,
 } from '@scrapyard/shared';
 
 const BASE = '/api';
@@ -78,7 +78,7 @@ export const api = {
 
   // --- scores -------------------------------------------------------------
   boards: () => request<CurrentBoards>('/scores'),
-  board: (key: string) => request<ScoreboardFile>(`/scores/board/${encodeURIComponent(key)}`),
+  board: (key: string) => request<Scoreboard>(`/scores/board/${encodeURIComponent(key)}`),
   boardIndex: () =>
     request<Array<{ kind: string; key: string; label: string; totalPoints: number }>>('/scores/boards'),
   award: (winnerId: string, note?: string) =>

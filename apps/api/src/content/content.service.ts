@@ -1,32 +1,24 @@
-import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { JsonStoreService } from '../database/json-store.service';
-import { IndexService } from '../database/index.service';
-import type { Pun, PunsFile } from '@scrapyard/shared';
+import { MongoService } from '../database/mongo.service';
+import type { Pun, PunsDocument } from '@scrapyard/shared';
 
-const PUNS_PATH = 'content/puns.json';
+const PUNS_ID = 'puns';
 
 /**
- * Everything the admin page can edit lives here. Today that's one content
- * type — the banner puns — but the shape is a registry so adding the next
- * type is a matter of appending to CONTENT_TYPES and giving it a file.
+ * Everything the admin page can edit. Today that's one content type — the
+ * banner puns — but the shape is a registry, so adding the next type means
+ * appending to `describeTypes` and giving it a document.
  */
 export interface ContentTypeDescriptor {
   id: string;
   label: string;
   description: string;
   icon: string;
-  /** Search terms the admin grid matches against. */
   keywords: string[];
   editable: boolean;
   itemCount: number;
-  /**
-   * 'content' cards open an editor. 'action' cards fire a one-shot operation
-   * (currently just the database export) — the grid renders them differently
-   * so it's obvious which cards do something immediately.
-   */
   kind: 'content' | 'action';
-  /** Unit shown next to itemCount, e.g. "puns", "files". */
   unit?: string;
 }
 
@@ -57,126 +49,144 @@ export const DEFAULT_PUNS: string[] = [
 ];
 
 @Injectable()
-export class ContentService implements OnModuleInit {
-  constructor(
-    private readonly store: JsonStoreService,
-    private readonly index: IndexService,
-  ) {}
+export class ContentService {
+  constructor(private readonly mongo: MongoService) {}
 
-  /** Seed the puns file on first boot so the banner is never empty. */
-  async onModuleInit(): Promise<void> {
-    await this.store.ensureLayout();
-    const existing = await this.store.read<PunsFile>(PUNS_PATH);
-    if (existing) return;
+  /**
+   * Read the puns document, seeding the defaults if it doesn't exist.
+   *
+   * Seeding lives here rather than in `onModuleInit` deliberately: on serverless
+   * the module initialises on every cold start, so writing there would add
+   * latency to arbitrary requests. `upsert` with `$setOnInsert` also makes two
+   * concurrent cold starts safe — the second is a no-op, not a duplicate.
+   */
+  async readPuns(): Promise<PunsDocument> {
+    const content = await this.mongo.content();
+    const existing = await content.findOne({ _id: PUNS_ID });
+    if (existing) {
+      return {
+        id: PUNS_ID,
+        label: existing.label,
+        updatedAt: existing.updatedAt,
+        items: existing.items,
+      };
+    }
 
     const now = new Date().toISOString();
-    const file: PunsFile = {
-      id: 'puns',
-      label: 'Banner Puns',
+    const items: Pun[] = DEFAULT_PUNS.map((text) => ({
+      id: randomUUID(),
+      text,
+      enabled: true,
+      createdAt: now,
       updatedAt: now,
-      items: DEFAULT_PUNS.map((text) => ({
-        id: randomUUID(),
-        text,
-        enabled: true,
-        createdAt: now,
-        updatedAt: now,
-      })),
-    };
-    await this.store.write(PUNS_PATH, file);
-    await this.index.rebuild();
-  }
+    }));
 
-  async readPunsFile(): Promise<PunsFile> {
-    const file = await this.store.read<PunsFile>(PUNS_PATH);
-    if (file) return file;
-    await this.onModuleInit();
-    return (await this.store.read<PunsFile>(PUNS_PATH))!;
+    await content.updateOne(
+      { _id: PUNS_ID },
+      { $setOnInsert: { label: 'Banner Puns', updatedAt: now, items } },
+      { upsert: true },
+    );
+
+    const seeded = await content.findOne({ _id: PUNS_ID });
+    return {
+      id: PUNS_ID,
+      label: seeded?.label ?? 'Banner Puns',
+      updatedAt: seeded?.updatedAt ?? now,
+      items: seeded?.items ?? items,
+    };
   }
 
   /** Public banner feed — enabled puns only. */
   async listEnabledPuns(): Promise<Pun[]> {
-    const file = await this.readPunsFile();
-    return file.items.filter((pun) => pun.enabled);
+    return (await this.readPuns()).items.filter((pun) => pun.enabled);
   }
 
   /** Admin view — everything, including disabled. */
   async listAllPuns(): Promise<Pun[]> {
-    return (await this.readPunsFile()).items;
+    return (await this.readPuns()).items;
   }
 
   async createPun(text: string): Promise<Pun> {
-    return this.store.transaction(async () => {
-      const clean = this.validateText(text);
-      const file = await this.readPunsFile();
-      const now = new Date().toISOString();
-      const pun: Pun = { id: randomUUID(), text: clean, enabled: true, createdAt: now, updatedAt: now };
-      await this.save({ ...file, items: [...file.items, pun] });
-      return pun;
-    });
+    const clean = this.validateText(text);
+    await this.readPuns(); // ensure the document exists
+    const content = await this.mongo.content();
+    const now = new Date().toISOString();
+    const pun: Pun = {
+      id: randomUUID(),
+      text: clean,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    // $push is atomic server-side — no read-modify-write race between admins.
+    await content.updateOne({ _id: PUNS_ID }, { $push: { items: pun }, $set: { updatedAt: now } });
+    return pun;
   }
 
   async updatePun(id: string, patch: { text?: string; enabled?: boolean }): Promise<Pun> {
-    return this.store.transaction(async () => {
-      const file = await this.readPunsFile();
-      const position = file.items.findIndex((pun) => pun.id === id);
-      if (position === -1) throw new NotFoundException('No such pun');
+    const content = await this.mongo.content();
+    const now = new Date().toISOString();
 
-      const next: Pun = {
-        ...file.items[position],
-        ...(patch.text !== undefined ? { text: this.validateText(patch.text) } : {}),
-        ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
-        updatedAt: new Date().toISOString(),
-      };
+    // The positional operator updates the matched array element in place.
+    const set: Record<string, unknown> = { 'items.$.updatedAt': now, updatedAt: now };
+    if (patch.text !== undefined) set['items.$.text'] = this.validateText(patch.text);
+    if (patch.enabled !== undefined) set['items.$.enabled'] = patch.enabled;
 
-      const items = [...file.items];
-      items[position] = next;
-      await this.save({ ...file, items });
-      return next;
-    });
+    const result = await content.updateOne({ _id: PUNS_ID, 'items.id': id }, { $set: set });
+    if (result.matchedCount === 0) throw new NotFoundException('No such pun');
+
+    const doc = await this.readPuns();
+    const pun = doc.items.find((item) => item.id === id);
+    if (!pun) throw new NotFoundException('No such pun');
+    return pun;
   }
 
   async deletePun(id: string): Promise<void> {
-    await this.store.transaction(async () => {
-      const file = await this.readPunsFile();
-      const items = file.items.filter((pun) => pun.id !== id);
-      if (items.length === file.items.length) throw new NotFoundException('No such pun');
-      await this.save({ ...file, items });
-    });
+    const content = await this.mongo.content();
+    const result = await content.updateOne(
+      { _id: PUNS_ID },
+      { $pull: { items: { id } }, $set: { updatedAt: new Date().toISOString() } },
+    );
+    if (result.modifiedCount === 0) throw new NotFoundException('No such pun');
   }
 
   /** Persist a full reorder from the admin drag handles. */
   async reorderPuns(orderedIds: string[]): Promise<Pun[]> {
-    return this.store.transaction(async () => {
-      const file = await this.readPunsFile();
-      const byId = new Map(file.items.map((pun) => [pun.id, pun]));
-      const items: Pun[] = [];
-      for (const id of orderedIds) {
-        const pun = byId.get(id);
-        if (pun) {
-          items.push(pun);
-          byId.delete(id);
-        }
+    const doc = await this.readPuns();
+    const byId = new Map(doc.items.map((pun) => [pun.id, pun]));
+    const items: Pun[] = [];
+
+    for (const id of orderedIds) {
+      const pun = byId.get(id);
+      if (pun) {
+        items.push(pun);
+        byId.delete(id);
       }
-      // Anything the client didn't mention keeps its relative order at the end.
-      items.push(...byId.values());
-      await this.save({ ...file, items });
-      return items;
-    });
+    }
+    // Anything the client didn't mention keeps its relative order at the end.
+    items.push(...byId.values());
+
+    const content = await this.mongo.content();
+    await content.updateOne(
+      { _id: PUNS_ID },
+      { $set: { items, updatedAt: new Date().toISOString() } },
+    );
+    return items;
   }
 
-  /**
-   * Cards for the admin grid. `fileCount` is injected by the controller so this
-   * service doesn't need to know about the export machinery.
-   */
-  async describeTypes(fileCount: number): Promise<ContentTypeDescriptor[]> {
-    const puns = await this.readPunsFile();
+  /** Cards for the searchable admin grid. `documentCount` comes from the exporter. */
+  async describeTypes(documentCount: number): Promise<ContentTypeDescriptor[]> {
+    const puns = await this.readPuns();
     return [
       {
         id: 'puns',
         label: 'Banner Puns',
         description: 'The rolling one-liners in the top prompter, between each Arthur flyby.',
         icon: 'megaphone',
-        keywords: ['pun', 'puns', 'banner', 'ticker', 'prompter', 'joke', 'jokes', 'marquee', 'headline'],
+        keywords: [
+          'pun', 'puns', 'banner', 'ticker', 'prompter', 'joke', 'jokes', 'marquee', 'headline',
+        ],
         editable: true,
         itemCount: puns.items.length,
         kind: 'content',
@@ -185,16 +195,16 @@ export class ContentService implements OnModuleInit {
       {
         id: 'export',
         label: 'Export Database',
-        description: 'Download every JSON file — racers, scoreboards, content and index — as one zip.',
+        description: 'Download every collection — racers, wins and content — as one zip.',
         icon: 'download',
         keywords: [
           'export', 'download', 'backup', 'zip', 'archive', 'dump',
-          'json', 'database', 'data', 'snapshot', 'save', 'restore',
+          'json', 'database', 'mongo', 'data', 'snapshot', 'save', 'restore',
         ],
         editable: true,
-        itemCount: fileCount,
+        itemCount: documentCount,
         kind: 'action',
-        unit: 'files',
+        unit: 'documents',
       },
       {
         id: 'achievements',
@@ -237,10 +247,5 @@ export class ContentService implements OnModuleInit {
     if (text.length < 3) throw new BadRequestException('A pun needs at least 3 characters');
     if (text.length > 160) throw new BadRequestException('Keep puns under 160 characters');
     return text;
-  }
-
-  private async save(file: PunsFile): Promise<void> {
-    await this.store.write(PUNS_PATH, { ...file, updatedAt: new Date().toISOString() });
-    await this.index.rebuild();
   }
 }

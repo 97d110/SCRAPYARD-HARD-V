@@ -1,23 +1,32 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArthurShip } from './arthur/ArthurShip';
 import type { Pun } from '@scrapyard/shared';
 
 /**
- * The top prompter. Puns scroll continuously right-to-left with a spinning
- * Arthur between each one, exactly like a stadium ticker.
+ * The top prompter. **One pun at a time**: it enters from the right, crosses the
+ * banner, exits fully on the left, and only then does the next one begin.
  *
  * Implementation notes:
- *  - The track is duplicated and translated -50%, which gives a seam-free
- *    infinite loop without measuring anything.
- *  - Duration scales with content length so 5 puns and 50 puns scroll at the
- *    same *speed*, not the same *rate*.
+ *  - Driven by the Web Animations API rather than CSS keyframes. The travel
+ *    distance depends on the measured pun width, which varies per pun, so
+ *    explicit pixel keyframes are simpler than trying to feed a CSS var into a
+ *    @keyframes transform. It also gives us `onfinish`, which is what advances
+ *    to the next pun — no timers to drift out of sync with the animation.
+ *  - Duration is derived from distance, so every pun moves at the same *speed*
+ *    regardless of how long the text is.
  *  - Pauses on hover and when the tab is hidden, so it isn't burning frames
  *    behind your back.
+ *  - Under `prefers-reduced-motion` nothing moves: each pun is held still and
+ *    cross-faded. This is load-bearing, not a nicety — the global reduced-motion
+ *    rule in index.css collapses animations to 0.01ms, which with an
+ *    onfinish-driven sequence would spin through every pun in a few frames.
  */
 export interface PunTickerProps {
   puns: Pun[];
-  /** Pixels per second. */
+  /** Pixels per second. Lower is more readable; this thing may live on a wall. */
   speed?: number;
+  /** How long each pun is held when motion is reduced. */
+  holdMs?: number;
 }
 
 const FALLBACK: Pun[] = [
@@ -30,45 +39,99 @@ const FALLBACK: Pun[] = [
   },
 ];
 
-export function PunTicker({ puns, speed = 72 }: PunTickerProps) {
-  /*
-   * The two-copy loop leaves visible dead space if the content is narrower than
-   * the viewport, so repeat a short list until there's enough to fill it.
-   */
-  const items = useMemo(() => {
-    const source = puns.length > 0 ? puns : FALLBACK;
-    const MIN_ITEMS = 6;
-    if (source.length >= MIN_ITEMS) return source;
-    const repeated: Pun[] = [];
-    while (repeated.length < MIN_ITEMS) {
-      repeated.push(...source.map((pun, i) => ({ ...pun, id: `${pun.id}-r${repeated.length + i}` })));
-    }
-    return repeated;
-  }, [puns]);
+function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(false);
 
-  const trackRef = useRef<HTMLDivElement>(null);
-  const [duration, setDuration] = useState(40);
+  useEffect(() => {
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)');
+    setReduced(query.matches);
+    const onChange = (event: MediaQueryListEvent) => setReduced(event.matches);
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
+
+  return reduced;
+}
+
+export function PunTicker({ puns, speed = 90, holdMs = 5000 }: PunTickerProps) {
+  const items = puns.length > 0 ? puns : FALLBACK;
+
+  const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
+  const reducedMotion = usePrefersReducedMotion();
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const itemRef = useRef<HTMLDivElement>(null);
+  const animationRef = useRef<Animation | null>(null);
 
   // Accent cycles through the palette so consecutive Arthurs differ.
   const accents = useMemo(() => ['#00E5FF', '#FF6A00', '#B6FF3C', '#FF2D95', '#7C5CFF'], []);
 
-  useEffect(() => {
-    const measure = () => {
-      const track = trackRef.current;
-      if (!track) return;
-      // scrollWidth covers both copies; one loop travels half of it.
-      const loopDistance = track.scrollWidth / 2;
-      if (loopDistance > 0) setDuration(Math.max(12, loopDistance / speed));
-    };
+  const current = items[index % items.length];
+  const accent = accents[index % accents.length];
 
-    measure();
-    // Re-measure when fonts land or the viewport changes width.
-    const observer = new ResizeObserver(measure);
-    if (trackRef.current) observer.observe(trackRef.current);
-    document.fonts?.ready.then(measure).catch(() => undefined);
-    return () => observer.disconnect();
-  }, [items, speed]);
+  const advance = useCallback(() => {
+    setIndex((i) => (i + 1) % items.length);
+  }, [items.length]);
+
+  /*
+   * One animation per pun. Re-running on `index` gives each pun a fresh
+   * measurement, which matters because a long pun has further to travel.
+   */
+  useEffect(() => {
+    if (reducedMotion) {
+      if (paused) return;
+      const timer = window.setTimeout(advance, holdMs);
+      return () => window.clearTimeout(timer);
+    }
+
+    const container = containerRef.current;
+    const item = itemRef.current;
+    if (!container || !item) return;
+
+    const containerWidth = container.offsetWidth;
+    const itemWidth = item.offsetWidth;
+
+    // Guard against a zero measurement on the very first paint — retry next frame.
+    if (containerWidth === 0 || itemWidth === 0) {
+      const raf = requestAnimationFrame(advance);
+      return () => cancelAnimationFrame(raf);
+    }
+
+    // Fully off the right edge, to fully off the left edge.
+    const distance = containerWidth + itemWidth;
+
+    const animation = item.animate(
+      [
+        { transform: `translate3d(${containerWidth}px, 0, 0)` },
+        { transform: `translate3d(${-itemWidth}px, 0, 0)` },
+      ],
+      {
+        duration: (distance / speed) * 1000,
+        easing: 'linear',
+        fill: 'both',
+      },
+    );
+
+    animationRef.current = animation;
+    animation.onfinish = advance;
+
+    return () => {
+      animation.onfinish = null;
+      animation.cancel();
+      animationRef.current = null;
+    };
+    // `paused` is deliberately excluded: pausing must not restart the animation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, items.length, reducedMotion, speed, holdMs, advance]);
+
+  // Pause/resume without tearing down the animation.
+  useEffect(() => {
+    const animation = animationRef.current;
+    if (!animation) return;
+    if (paused) animation.pause();
+    else animation.play();
+  }, [paused]);
 
   useEffect(() => {
     const onVisibility = () => setPaused(document.hidden);
@@ -76,21 +139,9 @@ export function PunTicker({ puns, speed = 72 }: PunTickerProps) {
     return () => document.removeEventListener('visibilitychange', onVisibility);
   }, []);
 
-  const sequence = (keyPrefix: string) =>
-    items.map((pun, i) => (
-      <div key={`${keyPrefix}-${pun.id}`} className="flex shrink-0 items-center">
-        <span className="whitespace-nowrap px-5 font-body text-[0.78rem] font-medium tracking-wide text-[#cfd8ff] sm:text-sm 3xl:text-base">
-          {pun.text}
-        </span>
-        {/* The separator: Arthur, spinning. */}
-        <span className="grid shrink-0 place-items-center px-2" aria-hidden="true">
-          <ArthurShip size={34} spin accent={accents[i % accents.length]} />
-        </span>
-      </div>
-    ));
-
   return (
     <div
+      ref={containerRef}
       className="scanlines relative isolate w-full overflow-hidden border-b border-hairline bg-[#06080f]/90 backdrop-blur"
       style={{ height: 'var(--ticker-h)' }}
       onMouseEnter={() => setPaused(true)}
@@ -110,35 +161,43 @@ export function PunTicker({ puns, speed = 72 }: PunTickerProps) {
       <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-16 bg-gradient-to-r from-[#06080f] to-transparent sm:w-28" />
       <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-16 bg-gradient-to-l from-[#06080f] to-transparent sm:w-28" />
 
+      {/*
+        Keyed on the pun id so React remounts per pun. That guarantees a clean
+        element for each animation instead of reusing one mid-flight.
+      */}
       <div
-        ref={trackRef}
-        className="flex h-full w-max items-center"
-        style={{
-          /*
-           * Longhand, not the `animation` shorthand. React only writes changed
-           * style keys — with the shorthand, a duration change rewrites it and
-           * silently resets play-state to `running`, un-pausing a hover that
-           * the user is still holding.
-           */
-          animationName: 'ticker-scroll',
-          animationDuration: `${duration}s`,
-          animationTimingFunction: 'linear',
-          animationIterationCount: 'infinite',
-          animationPlayState: paused ? 'paused' : 'running',
-          willChange: 'transform',
-        }}
+        key={current.id}
+        ref={itemRef}
+        className="absolute left-0 top-0 flex h-full w-max items-center"
+        style={
+          reducedMotion
+            ? {
+                // Held still and centred; cross-fade handles the transition.
+                left: '50%',
+                transform: 'translateX(-50%)',
+                animation: 'pun-fade 600ms ease-out both',
+              }
+            : {
+                // Parked off-screen right until the animation takes over, so
+                // there's no flash of an unpositioned pun on the first frame.
+                transform: 'translate3d(100vw, 0, 0)',
+                willChange: 'transform',
+              }
+        }
       >
-        {sequence('a')}
-        {/* Second copy makes the wrap invisible. */}
-        <div aria-hidden="true" className="flex">
-          {sequence('b')}
-        </div>
+        <span className="whitespace-nowrap px-5 font-body text-[0.78rem] font-medium tracking-wide text-[#cfd8ff] sm:text-sm 3xl:text-base">
+          {current.text}
+        </span>
+        {/* Arthur rides along behind each pun, spinning. */}
+        <span className="grid shrink-0 place-items-center px-2" aria-hidden="true">
+          <ArthurShip size={34} spin accent={accent} />
+        </span>
       </div>
 
       <style>{`
-        @keyframes ticker-scroll {
-          from { transform: translate3d(0, 0, 0); }
-          to   { transform: translate3d(-50%, 0, 0); }
+        @keyframes pun-fade {
+          from { opacity: 0; }
+          to   { opacity: 1; }
         }
       `}</style>
     </div>

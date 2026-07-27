@@ -1,59 +1,58 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Response } from 'express';
 import archiver from 'archiver';
-import { JsonStoreService } from './json-store.service';
-import { IndexService } from './index.service';
+import { MongoService } from './mongo.service';
 import { dayKey, timezoneName } from '../common/period.util';
 
 export interface ExportManifest {
   exportedAt: string;
   exportedBy: string;
   timezone: string;
-  /** Relative path -> byte size, for a quick integrity eyeball. */
-  files: Record<string, number>;
-  counts: { users: number; scoreboards: number; content: number; index: number };
+  database: string;
+  /** Collection name -> document count. */
+  counts: Record<string, number>;
+  /** Collection name -> byte size of the exported JSON. */
+  bytes: Record<string, number>;
 }
 
+/** Collections dumped, in the order they appear in the archive. */
+const COLLECTIONS = ['users', 'wins', 'content'] as const;
+
 /**
- * Streams the entire lo-fi JSON database out as a zip.
+ * Streams the whole database out as a zip of JSON files.
  *
- * Streamed rather than buffered: the archive is piped straight to the HTTP
- * response, so memory stays flat no matter how many racers and historical
- * boards have accumulated.
+ * Streamed rather than buffered, so memory stays flat however many wins have
+ * accumulated — each collection is written from a cursor one document at a
+ * time, never materialised as an array.
  *
- * The export runs inside a store transaction. That matters — without it, a
- * concurrent score award could land between reading `users/` and reading
- * `scores/`, producing a backup where the boards disagree with the user files.
+ * Unlike the old file-based exporter, this needs no lock. `wins` is append-only
+ * and the other collections change rarely, so a concurrent award can at worst
+ * mean one extra win lands in the archive. There is no derived state that could
+ * come out internally inconsistent.
  */
 @Injectable()
 export class ExportService {
   private readonly logger = new Logger(ExportService.name);
 
-  constructor(
-    private readonly store: JsonStoreService,
-    private readonly index: IndexService,
-  ) {}
+  constructor(private readonly mongo: MongoService) {}
 
-  /** Suggested download filename, e.g. `scrapyard-database-2026-07-26.zip`. */
+  /** Suggested download filename, e.g. `scrapyard-2026-07-26.zip`. */
   filename(): string {
-    return `scrapyard-database-${dayKey()}.zip`;
+    return `scrapyard-${dayKey()}.zip`;
   }
 
   /**
-   * Pipe a zip of the whole database into `response`.
+   * Pipe a zip of every collection into `response`.
    *
    * Headers must already be sent by the caller — once the stream starts we
-   * cannot switch to a JSON error body, so any failure mid-stream can only
-   * abort the connection (which leaves the client with a truncated,
-   * detectably-invalid zip rather than silently-wrong data).
+   * cannot switch to a JSON error body, so a mid-stream failure can only abort
+   * the connection. That leaves a truncated, detectably-invalid zip rather than
+   * silently-wrong data.
    */
   async streamTo(response: Response, actorEmail: string): Promise<void> {
     const archive = archiver('zip', { zlib: { level: 9 } });
 
-    archive.on('warning', (error) => {
-      // ENOENT here means a file vanished mid-walk; worth knowing, not fatal.
-      this.logger.warn(`Archive warning: ${error.message}`);
-    });
+    archive.on('warning', (error) => this.logger.warn(`Archive warning: ${error.message}`));
     archive.on('error', (error) => {
       this.logger.error(`Archive failed: ${error.message}`);
       response.destroy(error);
@@ -61,99 +60,101 @@ export class ExportService {
 
     archive.pipe(response);
 
-    await this.store.transaction(async () => {
-      const files: Record<string, number> = {};
+    const db = await this.mongo.db();
+    const counts: Record<string, number> = {};
+    const bytes: Record<string, number> = {};
 
-      for (const dir of ['users', 'scores', 'content', 'index'] as const) {
-        for (const name of await this.store.list(dir)) {
-          const relative = `${dir}/${name}`;
-          // Read through the store so the path-containment guard applies.
-          const contents = await this.store.read<unknown>(relative);
-          if (contents === null) continue;
+    for (const name of COLLECTIONS) {
+      const cursor = db.collection(name).find({});
+      const parts: string[] = ['[\n'];
+      let first = true;
+      let n = 0;
 
-          const body = `${JSON.stringify(contents, null, 2)}\n`;
-          files[relative] = Buffer.byteLength(body, 'utf8');
-          archive.append(body, { name: `database/${relative}` });
-        }
+      for await (const doc of cursor) {
+        parts.push(`${first ? '' : ',\n'}  ${JSON.stringify(doc)}`);
+        first = false;
+        n += 1;
       }
+      parts.push('\n]\n');
 
-      const snapshot = await this.index.read();
-      const manifest: ExportManifest = {
-        exportedAt: new Date().toISOString(),
-        exportedBy: actorEmail,
-        timezone: timezoneName(),
-        files,
-        counts: {
-          users: Object.keys(files).filter((f) => f.startsWith('users/')).length,
-          scoreboards: Object.keys(files).filter((f) => f.startsWith('scores/')).length,
-          content: Object.keys(files).filter((f) => f.startsWith('content/')).length,
-          index: Object.keys(files).filter((f) => f.startsWith('index/')).length,
-        },
-      };
+      const body = parts.join('');
+      counts[name] = n;
+      bytes[name] = Buffer.byteLength(body, 'utf8');
+      archive.append(body, { name: `database/${name}.json` });
+    }
 
-      archive.append(`${JSON.stringify(manifest, null, 2)}\n`, { name: 'manifest.json' });
-      archive.append(readmeText(manifest, snapshot.updatedAt), { name: 'README.txt' });
+    const manifest: ExportManifest = {
+      exportedAt: new Date().toISOString(),
+      exportedBy: actorEmail,
+      timezone: timezoneName(),
+      database: process.env.MONGODB_DB || 'scrapyard',
+      counts,
+      bytes,
+    };
 
-      this.logger.log(
-        `Database export by ${actorEmail}: ${Object.keys(files).length} files`,
-      );
-    });
+    archive.append(`${JSON.stringify(manifest, null, 2)}\n`, { name: 'manifest.json' });
+    archive.append(readmeText(manifest), { name: 'README.txt' });
+
+    this.logger.log(
+      `Export by ${actorEmail}: ${Object.entries(counts)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(' ')}`,
+    );
 
     await archive.finalize();
   }
 
-  /** Byte-accurate counts without building the archive — used for the UI. */
-  async summary(): Promise<ExportManifest['counts'] & { totalBytes: number }> {
-    let totalBytes = 0;
-    const counts = { users: 0, scoreboards: 0, content: 0, index: 0 };
+  /** Counts without building the archive — drives the admin card. */
+  async summary(): Promise<{
+    users: number;
+    wins: number;
+    content: number;
+    totalBytes: number;
+  }> {
+    const db = await this.mongo.db();
+    const stats = await Promise.all(
+      COLLECTIONS.map(async (name) => [name, await db.collection(name).countDocuments()] as const),
+    );
 
-    for (const [dir, key] of [
-      ['users', 'users'],
-      ['scores', 'scoreboards'],
-      ['content', 'content'],
-      ['index', 'index'],
-    ] as const) {
-      for (const name of await this.store.list(dir)) {
-        const contents = await this.store.read<unknown>(`${dir}/${name}`);
-        if (contents === null) continue;
-        counts[key] += 1;
-        totalBytes += Buffer.byteLength(`${JSON.stringify(contents, null, 2)}\n`, 'utf8');
-      }
-    }
+    const counts = Object.fromEntries(stats) as Record<(typeof COLLECTIONS)[number], number>;
 
-    return { ...counts, totalBytes };
+    /*
+     * A rough estimate rather than a real measurement. `collStats` needs
+     * elevated privileges an Atlas application user typically doesn't have, and
+     * this only drives a number on a card.
+     */
+    const totalBytes = counts.users * 400 + counts.wins * 200 + counts.content * 6000;
+
+    return { users: counts.users, wins: counts.wins, content: counts.content, totalBytes };
   }
 }
 
-function readmeText(manifest: ExportManifest, indexUpdatedAt: string): string {
-  const total = Object.keys(manifest.files).length;
+function readmeText(manifest: ExportManifest): string {
   return `Scrapyard database export
 =========================
 
 Exported at : ${manifest.exportedAt}
 Exported by : ${manifest.exportedBy}
+Database    : ${manifest.database}
 Timezone    : ${manifest.timezone}
-Index built : ${indexUpdatedAt}
-Files       : ${total}
 
-Layout
-------
-database/users/      One file per racer. THE SOURCE OF TRUTH.
-database/scores/     Derived leaderboards, one file per period.
-database/content/    Editable site content (banner puns).
-database/index/      Pointers to every file above. Derived.
-manifest.json        This export's file list with byte sizes.
+Contents
+--------
+database/users.json    one document per racer, _id = the Google 'sub' claim
+database/wins.json     one immutable document per win — THE SOURCE OF TRUTH
+database/content.json  editable site content (banner puns)
+manifest.json          counts and byte sizes for this export
+
+There are no scoreboard files. Leaderboards are aggregations over wins computed
+on read, so there is no derived state to back up or restore.
 
 Restoring
 ---------
-1. Stop the API.
-2. Copy the contents of database/ over your DATABASE_DIR.
-3. Start the API.
-4. POST /api/scores/rebuild?confirm=yes  (admin session required)
+  mongoimport --uri "$MONGODB_URI" --collection users   --file database/users.json   --jsonArray
+  mongoimport --uri "$MONGODB_URI" --collection wins    --file database/wins.json    --jsonArray
+  mongoimport --uri "$MONGODB_URI" --collection content --file database/content.json --jsonArray
 
-Step 4 regenerates every file under scores/ and index/ from the user files, so
-you only strictly need to restore database/users/ and database/content/. If the
-derived files disagree with the user files for any reason, the rebuild is
-authoritative.
+Add --drop to replace collections rather than merge into them. Note that
+'wins.at' is a BSON date; mongoimport understands the $date form in this dump.
 `;
 }
