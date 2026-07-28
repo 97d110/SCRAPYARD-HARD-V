@@ -13,6 +13,8 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { AdminGuard, JwtAuthGuard } from '../auth/guards';
+import { ClientId } from '../live/client-id.decorator';
+import { LiveGateway } from '../live/live.gateway';
 import { MetricsService } from './metrics.service';
 import type { MetricDef } from '@scrapyard/shared';
 
@@ -100,26 +102,44 @@ export class MetricsController {
 @Controller('admin/metrics')
 @UseGuards(JwtAuthGuard, AdminGuard)
 export class AdminMetricsController {
-  constructor(private readonly metrics: MetricsService) {}
+  constructor(
+    private readonly metrics: MetricsService,
+    private readonly live: LiveGateway,
+  ) {}
 
   @Get()
   async all(): Promise<MetricDef[]> {
     return this.metrics.definitions();
   }
 
+  /*
+   * A metric is a *column* on every leaderboard and a term other formulas can
+   * reference, so each of these three changes the shape of what other tabs are
+   * looking at — not just a number in it.
+   */
+
   @Post()
-  async create(@Body() dto: CreateMetricDto): Promise<MetricDef> {
-    return this.metrics.createMetric(dto);
+  async create(@Body() dto: CreateMetricDto, @ClientId() origin?: string): Promise<MetricDef> {
+    const metric = await this.metrics.createMetric(dto);
+    this.live.broadcast({ type: 'metrics:changed', origin });
+    return metric;
   }
 
   @Patch(':id')
-  async update(@Param('id') id: string, @Body() dto: UpdateMetricDto): Promise<MetricDef> {
-    return this.metrics.updateMetric(id, dto);
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateMetricDto,
+    @ClientId() origin?: string,
+  ): Promise<MetricDef> {
+    const metric = await this.metrics.updateMetric(id, dto);
+    this.live.broadcast({ type: 'metrics:changed', origin });
+    return metric;
   }
 
   @Delete(':id')
   @HttpCode(204)
-  async remove(@Param('id') id: string): Promise<void> {
+  async remove(@Param('id') id: string, @ClientId() origin?: string): Promise<void> {
     await this.metrics.deleteMetric(id);
+    this.live.broadcast({ type: 'metrics:changed', origin });
   }
 }

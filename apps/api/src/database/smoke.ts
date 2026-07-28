@@ -28,13 +28,16 @@ import { JwtService } from '@nestjs/jwt';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import { MongoClient } from 'mongodb';
+import { WebSocket } from 'ws';
 import { AppModule } from '../app.module';
 import { AuthService } from '../auth/auth.service';
 import { GoogleStrategy } from '../auth/google.strategy';
 import { SESSION_COOKIE } from '../auth/jwt.strategy';
+import { LIVE_PATH } from '../live/live.constants';
 import { UsersService } from '../users/users.service';
 import { mountLoginAssets, mountSpa } from '../web/serve-spa';
 import { dayKey, monthKey } from '../common/period.util';
+import type { LiveFrame } from '@scrapyard/shared';
 
 let passed = 0;
 const failures: string[] = [];
@@ -679,6 +682,174 @@ async function main(): Promise<void> {
     const authed = await fetch(`${url}/`, { headers: { Cookie: `${SESSION_COOKIE}=${issued}` } });
     check('authenticated / serves the app', authed.status === 200);
     check('authenticated / includes the bundle', /\/assets\/index-[\w-]+\.js/.test(await authed.text()));
+  }
+
+  // --- live channel ----------------------------------------------------------
+  console.log('\nlive channel (WebSocket)');
+  {
+    const wsBase = url.replace(/^http/, 'ws');
+    const cookie = `${SESSION_COOKIE}=${issued}`;
+
+    /**
+     * Open a socket and start collecting frames. Resolves on `open`; rejects
+     * with the HTTP status when the upgrade is refused, which is what the two
+     * negative checks below assert on.
+     */
+    const openSocket = (
+      target: string,
+      headers: Record<string, string>,
+    ): Promise<{ socket: WebSocket; frames: LiveFrame[] }> =>
+      new Promise((resolve, reject) => {
+        const socket = new WebSocket(target, { headers });
+        const frames: LiveFrame[] = [];
+        socket.on('message', (data) => {
+          try {
+            frames.push(JSON.parse(String(data)) as LiveFrame);
+          } catch {
+            failures.push('live channel sent a frame that was not JSON');
+          }
+        });
+        socket.on('open', () => resolve({ socket, frames }));
+        socket.on('unexpected-response', (_request, response) => {
+          socket.terminate();
+          reject(new Error(`HTTP ${response.statusCode}`));
+        });
+        socket.on('error', (error) => reject(error));
+      });
+
+    const refusalFor = async (target: string, headers: Record<string, string>): Promise<string> => {
+      try {
+        const opened = await openSocket(target, headers);
+        opened.socket.terminate();
+        return 'opened';
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    };
+
+    const findFrame = <T extends LiveFrame['type']>(
+      frames: LiveFrame[],
+      type: T,
+    ): Extract<LiveFrame, { type: T }> | undefined =>
+      frames.find((frame): frame is Extract<LiveFrame, { type: T }> => frame.type === type);
+
+    /** Poll a condition rather than sleeping a fixed time — no flake, no waste. */
+    const waitFor = async (
+      predicate: () => boolean | Promise<boolean>,
+      timeoutMs = 4000,
+    ): Promise<boolean> => {
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        if (await predicate()) return true;
+        if (Date.now() >= deadline) return false;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    };
+
+    // The gate, first. A socket that anyone could open would hand every race,
+    // every racer's name and the whole roster to an unauthenticated caller.
+    check(
+      'an anonymous upgrade is refused with 401',
+      (await refusalFor(`${wsBase}${LIVE_PATH}`, {})).includes('401'),
+      await refusalFor(`${wsBase}${LIVE_PATH}`, {}),
+    );
+    check(
+      'a cross-origin upgrade is refused with 403 even with a valid cookie',
+      (await refusalFor(`${wsBase}${LIVE_PATH}`, { Cookie: cookie, Origin: 'https://evil.example' })).includes('403'),
+    );
+    check(
+      'an unknown upgrade path is refused with 404',
+      (await refusalFor(`${wsBase}/api/not-a-socket`, { Cookie: cookie })).includes('404'),
+    );
+
+    const listener = await openSocket(`${wsBase}${LIVE_PATH}`, { Cookie: cookie });
+
+    check('a session cookie opens the socket', listener.socket.readyState === WebSocket.OPEN);
+    check('the socket greets with live:hello', await waitFor(() => listener.frames.length > 0));
+    const hello = findFrame(listener.frames, 'live:hello');
+    check('live:hello names the signed-in racer', typeof hello?.userId === 'string', hello);
+    check('live:hello carries a server id for redeploy detection', typeof hello?.serverId === 'string');
+
+    const withSocket = await call('GET', '/health');
+    check('/api/health reports the open socket', withSocket.body?.liveClients >= 1, withSocket.body);
+
+    // A race recorded over HTTP must reach a socket that had nothing to do with
+    // that request — the whole point of the channel.
+    listener.frames.length = 0;
+    const tagged = await fetch(`${url}/api/scores/record`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+        'Content-Type': 'application/json',
+        'X-Scrapyard-Client': 'smoke-tab',
+      },
+      body: JSON.stringify({
+        results: [
+          { racerId: 'seed-noam', place: 1, gameScore: 15 },
+          { racerId: 'seed-dana', place: 2, gameScore: 9 },
+        ],
+      }),
+    });
+    check('recording a race over HTTP still succeeds', tagged.status === 201, tagged.status);
+    check(
+      'the race reaches the socket as game:recorded',
+      await waitFor(() => Boolean(findFrame(listener.frames, 'game:recorded'))),
+      listener.frames,
+    );
+    const recorded = findFrame(listener.frames, 'game:recorded');
+    check(
+      'game:recorded carries the winner the flyby needs',
+      recorded?.winner?.id === 'seed-noam' &&
+        Boolean(recorded.winner.displayName) &&
+        Boolean(recorded.winner.accentColor),
+      recorded?.winner,
+    );
+    check('game:recorded reports the winner’s all-time wins', typeof recorded?.winner?.allTime === 'number');
+    check('game:recorded echoes the calling tab as origin', recorded?.origin === 'smoke-tab', recorded?.origin);
+    check('the frame is stamped with a server time', typeof recorded?.at === 'string');
+
+    // Config and content, not just scores.
+    listener.frames.length = 0;
+    const newPun = await call('POST', '/admin/content/puns', {
+      token: adminToken,
+      body: { text: 'The live channel tested this pun.' },
+    });
+    check('creating a pun succeeds', newPun.status === 201, newPun.body);
+    check(
+      'a pun edit reaches the socket as puns:changed',
+      await waitFor(() => Boolean(findFrame(listener.frames, 'puns:changed'))),
+      listener.frames,
+    );
+    check(
+      'a change made without a tab id carries no origin',
+      findFrame(listener.frames, 'puns:changed')?.origin === undefined,
+    );
+
+    // A rename has no scores behind it, but every board joins the user document
+    // on read — so it has to travel too.
+    listener.frames.length = 0;
+    const renamed = await call('PATCH', '/users/seed-dana', {
+      token: racerToken,
+      body: { tagline: 'Brakes are a rumour.' },
+    });
+    check('editing your own profile succeeds', renamed.status === 200, renamed.body);
+    check(
+      'a profile edit reaches the socket as roster:changed',
+      await waitFor(() => Boolean(findFrame(listener.frames, 'roster:changed'))),
+      listener.frames,
+    );
+    check(
+      'roster:changed says which racer moved, and why',
+      findFrame(listener.frames, 'roster:changed')?.reason === 'profile' &&
+        findFrame(listener.frames, 'roster:changed')?.userId === 'seed-dana',
+      findFrame(listener.frames, 'roster:changed'),
+    );
+
+    listener.socket.close();
+    check(
+      'closing a tab releases its slot',
+      await waitFor(async () => (await call('GET', '/health')).body?.liveClients === 0),
+    );
   }
 
   // --- hardening -------------------------------------------------------------

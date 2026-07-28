@@ -4,10 +4,13 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
 import { ApiError, api } from '../lib/api';
+import { live } from '../lib/live';
+import { checkForServiceWorkerUpdate } from '../lib/pwa';
 import type { CurrentBoards, GameResultInput, KillEventInput, PublicUser, Pun } from '@scrapyard/shared';
 
 /**
@@ -15,11 +18,14 @@ import type { CurrentBoards, GameResultInput, KillEventInput, PublicUser, Pun } 
  *
  * Per the spec, boot is a single burst: session, then the full roster + all
  * three current leaderboards + the puns. After that everything is served from
- * memory and only mutations refetch.
+ * memory, and it is brought back up to date by two things: this tab's own
+ * mutations, and the live channel telling it about everyone else's.
  */
 interface AppState {
   status: 'booting' | 'anonymous' | 'ready' | 'error';
   error: string | null;
+  /** True when the boot failure was "no network" rather than "the API said no". */
+  offline: boolean;
 
   me: PublicUser | null;
 
@@ -28,7 +34,7 @@ interface AppState {
   puns: Pun[];
 
   /** Bumped by Arthur-worthy events; consumers watch it to trigger the flyby. */
-  celebration: { id: number; accent: string; caption: string } | null;
+  celebration: { id: string; accent: string; caption: string } | null;
 }
 
 interface AppActions {
@@ -43,16 +49,32 @@ interface AppActions {
   refreshPuns: () => Promise<void>;
   /** Re-read the roster in place, without the full-screen boot spinner. */
   refreshUsers: () => Promise<void>;
+  /** Re-derive all three current boards in place. */
+  refreshBoards: () => Promise<void>;
   clearCelebration: () => void;
   userById: (id: string) => PublicUser | undefined;
 }
 
 const AppContext = createContext<(AppState & AppActions) | null>(null);
 
+/** The shared reads a live event can invalidate. */
+type RefreshKey = 'boards' | 'users' | 'puns';
+
+/**
+ * How long to gather events before refetching.
+ *
+ * One race produces one event, so this is normally a formality — but a pun
+ * reorder, an admin working quickly, or the burst that arrives when a tab
+ * reconnects after being asleep would otherwise each cost their own round trip.
+ * Short enough that nobody perceives it as lag.
+ */
+const COALESCE_MS = 150;
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>({
     status: 'booting',
     error: null,
+    offline: false,
     me: null,
     users: [],
     boards: null,
@@ -60,8 +82,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     celebration: null,
   });
 
+  /*
+   * The live subscription is set up once and must not be rebuilt whenever
+   * status changes, so it reads status through a ref instead of closing over it.
+   * Refetching while the session is gone would just collect 401s.
+   */
+  const statusRef = useRef(state.status);
+  statusRef.current = state.status;
+
   const boot = useCallback(async () => {
-    setState((prev) => ({ ...prev, status: 'booting', error: null }));
+    setState((prev) => ({ ...prev, status: 'booting', error: null, offline: false }));
 
     // No auth-config fetch: the login page is server-rendered, so the server
     // already knows which domains it permits. Nothing here needs to ask.
@@ -76,6 +106,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setState((prev) => ({
         ...prev,
         status: 'error',
+        // A TypeError from fetch, or a browser that already knows it has no
+        // link. Worth distinguishing: "you're offline" is actionable and "could
+        // not reach the API" reads like the service is broken.
+        offline: typeof navigator !== 'undefined' && navigator.onLine === false,
         error: error instanceof Error ? error.message : 'Could not reach the API',
       }));
       return;
@@ -86,6 +120,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setState({
         status: 'ready',
         error: null,
+        offline: false,
         me,
         users,
         boards,
@@ -97,6 +132,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         ...prev,
         status: 'error',
         me,
+        offline: typeof navigator !== 'undefined' && navigator.onLine === false,
         error: error instanceof Error ? error.message : 'Boot failed',
       }));
     }
@@ -120,6 +156,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
    * refetching — then re-pull the roster so per-user totals on the Users page
    * stay honest. The celebration still rides on the winner alone: a race has
    * many finishers, but only the podium's top step earns the flyby.
+   *
+   * Every other tab learns about this from the `game:recorded` event instead.
+   * This one won't: the server marks the event with our client id and the
+   * channel drops it, because everything below is that event's effect already.
    */
   const recordGame = useCallback(
     async (results: GameResultInput[], events: KillEventInput[] = [], note?: string) => {
@@ -142,7 +182,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         },
       },
       celebration: {
-        id: Date.now(),
+        // The game's own id, so two celebrations landing in the same
+        // millisecond still remount the animation instead of sharing a run.
+        id: result.game.id,
         accent: result.winner.accentColor,
         caption: `${result.winner.displayName} — ${result.winner.allTime} ${
           result.winner.allTime === 1 ? 'win' : 'wins'
@@ -166,7 +208,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const refreshUsers = useCallback(async () => {
     const users = await api.users().catch(() => null);
-    if (users) setState((prev) => ({ ...prev, users }));
+    if (!users) return;
+    setState((prev) => ({
+      ...prev,
+      users,
+      /*
+       * Keep `me` in step from the same payload. The roster carries every field
+       * `/auth/me` does, so this costs nothing extra and it is what makes a
+       * profile edit in another tab — or a role change — show up in this tab's
+       * top bar rather than sitting stale until the next reload.
+       */
+      me: prev.me ? users.find((user) => user.id === prev.me?.id) ?? prev.me : prev.me,
+    }));
+  }, []);
+
+  const refreshBoards = useCallback(async () => {
+    // `periods` comes down with this response, so a board refresh is also what
+    // rolls a long-lived tab over midnight.
+    const boards = await api.boards().catch(() => null);
+    if (boards) setState((prev) => ({ ...prev, boards }));
   }, []);
 
   const refreshPuns = useCallback(async () => {
@@ -183,6 +243,131 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [state.users],
   );
 
+  // ── Live updates ─────────────────────────────────────────────────────────
+
+  const pending = useRef(new Set<RefreshKey>());
+  const flush = useRef<number | undefined>(undefined);
+
+  const scheduleRefresh = useCallback(
+    (keys: readonly RefreshKey[]) => {
+      // Nothing to refresh into until boot has finished, and no session to
+      // refresh with once it's gone.
+      if (statusRef.current !== 'ready') return;
+
+      for (const key of keys) pending.current.add(key);
+      if (flush.current !== undefined) return;
+
+      flush.current = window.setTimeout(() => {
+        flush.current = undefined;
+        const due = [...pending.current];
+        pending.current.clear();
+
+        void Promise.all(
+          due.map((key) => {
+            if (key === 'boards') return refreshBoards();
+            if (key === 'users') return refreshUsers();
+            return refreshPuns();
+          }),
+        );
+      }, COALESCE_MS);
+    },
+    [refreshBoards, refreshUsers, refreshPuns],
+  );
+
+  /**
+   * The last server we spoke to.
+   *
+   * Doubles as "have we ever been connected?". A `live:hello` while this is null
+   * is the first connection, which boot already covered; a second one means we
+   * were disconnected and have missed everything in between. A *different*
+   * server id means the service was redeployed, so there is probably a new
+   * bundle to pick up as well.
+   */
+  const seenServer = useRef<string | null>(null);
+
+  useEffect(
+    () =>
+      live.subscribe((frame) => {
+        if (frame.type === 'live:hello') {
+          const previous = seenServer.current;
+          seenServer.current = frame.serverId;
+
+          if (previous === null) return;
+
+          // Reconnected. Anything that changed while we were away arrived
+          // nowhere, so re-read all of it rather than guessing what we missed.
+          scheduleRefresh(['boards', 'users', 'puns']);
+          if (previous !== frame.serverId) void checkForServiceWorkerUpdate();
+          return;
+        }
+
+        switch (frame.type) {
+          case 'game:recorded':
+            // Boards move, and so do the roster's per-racer win counts.
+            scheduleRefresh(['boards', 'users']);
+            setState((prev) =>
+              prev.status === 'ready'
+                ? {
+                    ...prev,
+                    celebration: {
+                      id: frame.gameId,
+                      accent: frame.winner.accentColor,
+                      caption: `${frame.winner.displayName} — ${frame.winner.allTime} ${
+                        frame.winner.allTime === 1 ? 'win' : 'wins'
+                      }`,
+                    },
+                  }
+                : prev,
+            );
+            break;
+
+          case 'game:deleted':
+            scheduleRefresh(['boards', 'users']);
+            break;
+
+          case 'roster:changed':
+            /*
+             * Boards too, not just the roster: leaderboard rows join the user
+             * document at query time, so a rename or a new accent colour
+             * changes every board on screen without a single game moving.
+             */
+            scheduleRefresh(['boards', 'users']);
+            break;
+
+          case 'puns:changed':
+            scheduleRefresh(['puns']);
+            break;
+
+          case 'metrics:changed':
+            // A metric is a board *column*, so this changes their shape.
+            scheduleRefresh(['boards']);
+            break;
+
+          case 'achievement-rules:changed':
+            // Nothing in this store reads rules — they only surface on a
+            // profile page, which subscribes for itself via useLiveEvent.
+            break;
+        }
+      }),
+    [scheduleRefresh],
+  );
+
+  // Retry the boot burst by itself once the browser says the link is back.
+  useEffect(() => {
+    const onOnline = () => {
+      if (statusRef.current === 'error') void boot();
+    };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, [boot]);
+
+  useEffect(
+    () => () => {
+      if (flush.current !== undefined) window.clearTimeout(flush.current);
+    },
+    [],
+  );
+
   const value = useMemo(
     () => ({
       ...state,
@@ -192,6 +377,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       patchMe,
       refreshPuns,
       refreshUsers,
+      refreshBoards,
       clearCelebration,
       userById,
     }),
@@ -203,6 +389,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       patchMe,
       refreshPuns,
       refreshUsers,
+      refreshBoards,
       clearCelebration,
       userById,
     ],

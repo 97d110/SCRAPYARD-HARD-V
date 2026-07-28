@@ -18,6 +18,7 @@ import type {
   RecordGameResponse,
   Scoreboard,
 } from '@scrapyard/shared';
+import { CLIENT_ID, CLIENT_ID_HEADER } from './client-id';
 
 /**
  * Request bodies for the admin metric/achievement editors. Kept here rather
@@ -82,11 +83,24 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const method = (init.method ?? 'GET').toUpperCase();
+  const headers: Record<string, string> = {};
+
+  if (init.body) headers['Content-Type'] = 'application/json';
+
+  /*
+   * Tag mutations with this tab's id. The server echoes it onto the live event
+   * the write produces, so the frame comes back recognisable as our own and we
+   * skip refetching state we already applied from the response. Reads carry no
+   * such tag — they cause no events.
+   */
+  if (method !== 'GET' && method !== 'HEAD') headers[CLIENT_ID_HEADER] = CLIENT_ID;
+
   const response = await fetch(`${BASE}${path}`, {
     // Session lives in an httpOnly cookie, so every call must carry it.
     credentials: 'include',
-    headers: init.body ? { 'Content-Type': 'application/json' } : undefined,
     ...init,
+    headers,
   });
 
   if (response.status === 204) return undefined as T;

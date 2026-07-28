@@ -175,7 +175,9 @@ JWT_SECRET=smoke DATA_ENCRYPTION_KEY=$(openssl rand -base64 32) npm run smoke
 
 Boots the real Nest app, seeds, and exercises every route: auth gate, domain
 restriction, admin reconciliation, the award path, achievements, the zip export,
-12 concurrent awards, and path-traversal rejection.
+12 concurrent awards, path-traversal rejection, and the live channel (an
+anonymous upgrade is refused, a cross-origin one is refused, then a real socket
+receives a race, a content edit and a profile edit recorded over HTTP).
 
 **It drops the database it points at**, so the name must contain `smoke` or
 `test` — the suite refuses to run otherwise.
@@ -224,6 +226,95 @@ straight from the index without touching documents.
 
 ---
 
+## Live updates
+
+Every open tab holds a WebSocket to `/api/live`. When the database changes, the
+other tabs find out and re-read what moved — so a race scored on somebody's
+phone lands on the wall display a moment later, with the winner's flyby, and
+nobody reloads anything.
+
+There is a **Live / Syncing / Offline** pill in the top bar. It is there because
+on a wall display "the board hasn't changed in a while" and "this tab stopped
+listening an hour ago" look exactly the same, and only one of them is fine.
+
+### The socket carries notifications, not data
+
+An event says *what changed* and the client refetches the affected endpoint. It
+does not ship the new leaderboards down the wire, which would put a second copy
+of derived state in flight and let two races arriving out of order leave a board
+wrong — the same drift [the data model](#how-the-data-model-works) exists to
+avoid. A refetch always lands on the current aggregation.
+
+The one exception is the winner block on `game:recorded`: the celebration needs
+a name, an accent and a win count at the instant it fires, and none of that is
+recoverable from "something changed".
+
+| Event | Sent when | Clients re-read |
+| --- | --- | --- |
+| `game:recorded` | a race is recorded | boards, roster, open profiles — and the flyby runs |
+| `game:deleted` | an admin deletes a race | boards, roster, race log, open profiles |
+| `roster:changed` | profile edit, admin-created or deleted racer, or a sign-in that claims a seat or reconciles a role | roster **and boards** — rows join the user document on read, so a rename changes every board |
+| `puns:changed` | the puns editor | the ticker, and the editor in any other admin's tab |
+| `metrics:changed` | a metric is added, retuned or removed | boards — a metric is a *column* |
+| `achievement-rules:changed` | a badge rule changes | open profile pages; a retuned threshold can unlock a badge with no write to that racer |
+
+`live:hello` arrives first on every connection. It proves the cookie was
+accepted, and it carries a `serverId` that changes on every boot — which is how
+a client tells "my connection dropped" (catch up on what I missed) from "the
+service was redeployed" (also go look for a new bundle).
+
+### What it is not
+
+- **Not a Mongo change stream.** Writes that don't go through the API — `npm run
+  seed`, an edit in the Atlas console — are invisible, and so is a second
+  instance's traffic. Both are fine for the single Render process this is built
+  for; both would want `broadcast` fed by a change stream if that ever changes.
+- **Not authenticated separately.** A browser can't set headers on a WebSocket
+  handshake, so the same-origin session cookie is the gate, checked by the same
+  `SessionReader` that gates the SPA bundle. An anonymous upgrade gets a 401.
+  The `Origin` is checked too — a WebSocket handshake is not subject to CORS, so
+  `SameSite=Lax` is otherwise the only thing standing between another site and
+  your roster.
+- **Not polling.** Which matters here: Render warns about free services that
+  generate "an uncommonly high volume of traffic", and a poll loop across the
+  crew is exactly that.
+
+### What it costs on the free plan
+
+The server pings each socket every 30 seconds to notice tabs that vanished
+without closing and to stay off the proxy's idle-timeout list. The browser
+answers automatically, and **that answer is inbound traffic, so an open tab
+keeps the instance awake.** A permanently-open wall display therefore burns the
+750-hour monthly quota (24 × 31 = 744, so it sits right at the ceiling) exactly
+as a keep-warm pinger would.
+
+The difference is that this only happens while somebody actually has the app
+open, which is also when they'd want it awake. If the display is meant to be up
+around the clock, Starter is the honest answer — same conclusion as
+[cold starts](#known-trade-offs).
+
+`GET /api/health` reports `liveClients`, which on a free instance with no shell
+is the only way to tell whether the channel is carrying anyone.
+
+### A tab's own echo
+
+Each tab sends an `X-Scrapyard-Client` id on every mutating request, and the
+server echoes it back on the resulting event as `origin`. A tab ignores its own
+echo only for `game:recorded`, because `POST /scores/record` answers with the
+three recomputed boards and the client writes those straight in — re-running the
+flyby would fire it twice.
+
+Every other event is processed even in the tab that caused it: `origin` says who
+sent the request, not that they learned the whole result. `DELETE
+/admin/games/:id` answers with `{ deletedId, dayKey, recomputedGames }` and no
+boards at all, so an admin who deletes a race needs that event as much as anyone
+else does.
+
+The id is **per tab, not per user** — somebody with the display open and their
+phone in hand must still see the phone's race land on the wall.
+
+---
+
 ## Architecture
 
 ```
@@ -235,9 +326,10 @@ straight from the index without touching documents.
   │ server-rendered HTML │          │ apps/web — React 18  │
   │ inline CSS + SVG     │          │ withheld until the   │
   │ ~16 KB, no bundle    │          │ session cookie is    │
-  │                      │          │ valid                │
+  │                      │          │ valid · installable  │
   └──────────┬───────────┘          └──────────┬───────────┘
              │                                 │  /api/*
+             │                                 │  ws /api/live ◄── pushed
              └──────────────┬──────────────────┘
                   ┌─────────▼──────────────────────┐
                   │ Render web service (one dyno)  │
@@ -306,6 +398,75 @@ user's next login.
 
 ---
 
+## Installing it (the PWA)
+
+The app is installable on a desktop or a phone home screen: a manifest, a set of
+icons, and a hand-written service worker in
+[`apps/web/public/sw.js`](apps/web/public/sw.js) — no build plugin.
+
+All of it (`/manifest.webmanifest`, `/sw.js`, `/icons/*`) resolves **before** the
+session gate in `mountSpa`, because the browser fetches those without carrying
+our cookie. The worker itself registers in production only; in development it
+would fight Vite's HMR and cache stale modules.
+
+### What the worker will and won't do
+
+| | |
+| --- | --- |
+| `/api/*` and any non-GET | never touched. Scores must be live, caching a mutation would be a bug, and the live socket lives under `/api` |
+| `/login` and its media | never touched. It must never be served from cache to somebody who has since signed in, and its background video is far too big to keep |
+| navigations | network-first, falling back to the cached app shell — a flaky link opens the app instead of the browser's dinosaur |
+| everything else | stale-while-revalidate: instant from cache, refreshed behind you. Safe because the bundle's filenames are content-hashed |
+
+Two rules exist because breaking them is subtle and the symptom is bizarre:
+
+- **The install list is added one file at a time.** `cache.addAll` is atomic, so a
+  single missing file rejects the whole install, the worker never activates, and
+  the app quietly stops being installable at all — which is exactly what a
+  reference to a nonexistent icon used to do here.
+- **Nothing that comes back as HTML is cached under the URL that asked for it.** A
+  plain `fetch('/')` is not a *navigation*, so it takes the asset path — and with
+  the session gone it follows its 302 and returns a perfectly `ok` login page,
+  which then overwrites the app shell. The same goes for any unknown path, which
+  the server answers with `index.html` via the SPA fallback.
+
+### Updating a display nobody reloads
+
+The whole point of the wall display is that it is never touched, so a deploy has
+to reach it by itself. [`apps/web/src/lib/pwa.ts`](apps/web/src/lib/pwa.ts) looks
+for a new worker when the tab becomes visible, on a 30-minute timer, and the
+moment the live socket reports a `serverId` it hasn't seen — the earliest signal
+that a deploy landed. The new worker calls `skipWaiting()`, claims its clients,
+and the page reloads itself once onto the new bundle.
+
+### Offline
+
+Honestly: barely. Every board is an aggregation computed on read, so there is no
+meaningful cached view of one. The worker gets the app *open* offline; the boot
+then says so and retries itself when the link comes back.
+
+### iOS
+
+The notch is handled — `viewport-fit=cover`, a translucent status bar, and chrome
+that pads itself by `env(safe-area-inset-*)` (see `--safe-top` in
+[index.css](apps/web/src/index.css)). Those three go together; change one and the
+other two are wrong.
+
+**Signing in from an installed iOS app is the rough edge.** Google's consent
+screen is outside the manifest scope, so iOS hands it to Safari, and a home
+screen web app doesn't share Safari's cookie jar — so the sign-in can complete
+in the wrong place and the installed app still shows the wall. The session lasts
+30 days, so this is a first-run problem rather than a daily one; if it bites, use
+the app in Safari for that sign-in. Android and desktop Chrome keep the whole
+flow inside the app.
+
+**Maskable icon.** `arthur-maskable-512.png` is the same art padded onto the void
+background, because Android crops a maskable icon to a circle and the unpadded
+one loses the BlazeRush logo off the top. If you replace the art, pad it: keep
+everything that matters inside the middle ~60%.
+
+---
+
 ## Known trade-offs
 
 **Cold starts.** A free instance spins down after 15 idle minutes and takes
@@ -365,6 +526,12 @@ npm run smoke        # full end-to-end suite (needs MONGODB_URI)
 | Admin page says admin-only | Not in `ADMIN_EMAILS` | Add it, then **sign out and back in** — the role reconciles at login |
 | `the 'bg-void' class does not exist` | Tailwind config not found | Configs are `.mjs` with absolute paths; the build runs from the repo root |
 | `Cannot find module @rollup/rollup-*` | npm optional-dependency bug | `rm -rf node_modules package-lock.json && npm install` |
+| Top bar says **Offline**, boards never move | The live socket can't connect | Check `liveClients` on `/api/health`. It retries on its own with backoff — a stuck "Offline" with the site otherwise working means the upgrade is being refused, so look for a `[Live] Refused a live socket` line in the logs |
+| Live updates work in production, not in `npm run dev` | `ws: true` missing from Vite's `/api` proxy, so Vite answers the upgrade itself | It's in [vite.config.mts](apps/web/vite.config.mts) — everything else on `/api` keeps working, which makes this a confusing one to spot |
+| `[Live] Refused a live socket from …` | The app is served from an origin this service doesn't answer to | List that origin in `WEB_ORIGIN`. A WebSocket handshake isn't subject to CORS, so this check is deliberate, not incidental |
+| Installed app won't sign in on iOS | Google's consent screen leaves the manifest scope and iOS hands it to Safari, which has its own cookie jar | Sign in using the app in Safari; see [Installing it](#installing-it-the-pwa) |
+| A deploy doesn't reach the wall display | Service worker didn't pick up the new build | It checks on visibility, every 30 minutes, and on a new `serverId` from the socket. Confirm `sw.js` is being served with `Cache-Control: max-age=0` (Express's default here) |
+| Offline launch shows the login wall | An old service worker cached `/login` as the app shell | Fixed in `scrapyard-v3`; bumping the cache name is what discards a poisoned shell |
 
 ---
 

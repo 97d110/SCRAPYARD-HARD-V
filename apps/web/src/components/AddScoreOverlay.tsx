@@ -600,21 +600,29 @@ export function AddScoreOverlay({
                               {index + 1}
                             </span>
 
-                            <Avatar
-                              src={user.avatarUrl}
-                              name={user.displayName}
-                              size={34}
-                              accent={user.accentColor}
-                            />
+                            {/* Winner marker rides above the avatar as a ribbon
+                                rather than trailing the name — inline it was the
+                                first thing `truncate` ate on a narrow screen. */}
+                            <span className="relative shrink-0">
+                              <Avatar
+                                src={user.avatarUrl}
+                                name={user.displayName}
+                                size={34}
+                                accent={user.accentColor}
+                              />
+                              {index === 0 && (
+                                <span
+                                  className="pointer-events-none absolute -top-3 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap px-1 py-[0.1rem] font-display text-[0.45rem] font-black uppercase leading-none tracking-[0.1em] text-black"
+                                  style={{ background: medal, boxShadow: `0 0 10px ${medal}`, borderRadius: 2 }}
+                                >
+                                  Winner
+                                </span>
+                              )}
+                            </span>
 
                             <span className="min-w-0 flex-1">
                               <span className="block truncate font-display text-[0.75rem] font-bold uppercase tracking-wide text-white">
                                 {user.displayName}
-                                {index === 0 && (
-                                  <span className="ml-2 text-[0.55rem] tracking-widest" style={{ color: medal }}>
-                                    winner
-                                  </span>
-                                )}
                               </span>
                               <span className="block truncate font-mono text-[0.6rem] text-[var(--text-faint)]">
                                 {user.favoriteRacer}

@@ -20,6 +20,8 @@ import {
   MinLength,
 } from 'class-validator';
 import { AdminGuard, CurrentUser, JwtAuthGuard } from '../auth/guards';
+import { ClientId } from '../live/client-id.decorator';
+import { LiveGateway } from '../live/live.gateway';
 import { ACCENT_COLORS, RACERS, UsersService } from './users.service';
 import { AchievementsService } from '../achievements/achievements.service';
 import type { ProfileBundle, PublicUser } from '@scrapyard/shared';
@@ -60,19 +62,31 @@ export class CreateRacerDto {
 @Controller('admin/users')
 @UseGuards(JwtAuthGuard, AdminGuard)
 export class AdminUsersController {
-  constructor(private readonly users: UsersService) {}
+  constructor(
+    private readonly users: UsersService,
+    private readonly live: LiveGateway,
+  ) {}
 
   /** Add a racer by email before they've ever signed in. */
   @Post()
-  async create(@Body() dto: CreateRacerDto): Promise<PublicUser> {
-    return this.users.createUnclaimed(dto);
+  async create(@Body() dto: CreateRacerDto, @ClientId() origin?: string): Promise<PublicUser> {
+    const created = await this.users.createUnclaimed(dto);
+    // A new seat is on every board immediately, at zero wins.
+    this.live.broadcast({
+      type: 'roster:changed',
+      origin,
+      reason: 'created',
+      userId: created.id,
+    });
+    return created;
   }
 
   /** Undo a typo. Only works while the seat is unclaimed and has no wins. */
   @Delete(':id')
   @HttpCode(204)
-  async remove(@Param('id') id: string): Promise<void> {
-    return this.users.deleteUnclaimed(id);
+  async remove(@Param('id') id: string, @ClientId() origin?: string): Promise<void> {
+    await this.users.deleteUnclaimed(id);
+    this.live.broadcast({ type: 'roster:changed', origin, reason: 'deleted', userId: id });
   }
 }
 
@@ -82,6 +96,7 @@ export class UsersController {
   constructor(
     private readonly users: UsersService,
     private readonly achievements: AchievementsService,
+    private readonly live: LiveGateway,
   ) {}
 
   /** The full roster. Fetched once on client boot. */
@@ -108,10 +123,19 @@ export class UsersController {
     @Param('id') id: string,
     @Body() dto: UpdateProfileDto,
     @CurrentUser() actor: PublicUser,
+    @ClientId() origin?: string,
   ): Promise<PublicUser> {
     if (actor.id !== id) {
       throw new ForbiddenException('You can only edit your own profile');
     }
-    return this.users.updateProfile(id, dto);
+    const updated = await this.users.updateProfile(id, dto);
+    /*
+     * Worth broadcasting even though nothing about the *scores* moved: rows join
+     * the user document at query time, so a rename or a new accent changes every
+     * board and every rival list on screen. This is the cascade the aggregate-on-
+     * read model spares the database, arriving at the clients instead.
+     */
+    this.live.broadcast({ type: 'roster:changed', origin, reason: 'profile', userId: id });
+    return updated;
   }
 }

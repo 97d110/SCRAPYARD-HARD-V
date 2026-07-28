@@ -8,19 +8,36 @@ import { ScoresModule } from './scores/scores.module';
 import { ContentModule } from './content/content.module';
 import { ConfigEditorModule } from './config/config-editor.module';
 import { WebModule } from './web/web.module';
+import { LiveModule } from './live/live.module';
+import { LiveGateway } from './live/live.gateway';
 import { dayKey, monthKey, timezoneName } from './common/period.util';
 
 @Controller()
 class MetaController {
-  /** Public liveness probe. Deliberately leaks nothing but clock and db name. */
+  constructor(private readonly live: LiveGateway) {}
+
+  /**
+   * Public liveness probe. Deliberately leaks nothing but clock, db name and a
+   * socket count — the last of which is the only way to tell, on a free
+   * instance with no shell, whether the live channel is actually carrying
+   * anyone.
+   */
   @Get('health')
-  health(): { status: 'ok'; timezone: string; day: string; month: string; database: string } {
+  health(): {
+    status: 'ok';
+    timezone: string;
+    day: string;
+    month: string;
+    database: string;
+    liveClients: number;
+  } {
     return {
       status: 'ok',
       timezone: timezoneName(),
       day: dayKey(),
       month: monthKey(),
       database: process.env.MONGODB_DB || 'scrapyard',
+      liveClients: this.live.connectionCount,
     };
   }
 
@@ -56,6 +73,7 @@ class MetaController {
     ContentModule,
     ConfigEditorModule,
     WebModule,
+    LiveModule,
   ],
   controllers: [MetaController],
 })

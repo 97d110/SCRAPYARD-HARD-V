@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { Calendar, Crosshair, Flame, Pencil, RotateCcw, Save, Skull, Swords, Upload, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { useApp } from '../state/AppStore';
+import { useLiveEvent } from '../state/useLiveEvent';
 import { AchievementGrid } from '../components/AchievementGrid';
 import { ArthurLottie } from '../components/arthur/ArthurLottie';
 import { RacerBadge } from '../components/RacerBadge';
@@ -44,6 +45,29 @@ export function UserPage() {
     void load();
     setEditing(false);
   }, [load]);
+
+  /**
+   * Re-read the bundle in place, keeping what's on screen until the new one
+   * lands. `load` blanks it first, which is right when you navigate here and
+   * wrong for a live update — it would flash the spinner across this page every
+   * time anybody, anywhere, recorded a race.
+   */
+  const refresh = useCallback(async () => {
+    const next = await api.profile(id).catch(() => null);
+    if (next) setBundle(next);
+  }, [id]);
+
+  /*
+   * Everything a profile is derived from, and all of it computed on read: races
+   * move the stats, streaks, rivals and heat strip; the roster carries rivals'
+   * names and accents; metrics are the columns behind `totals`; and a retuned
+   * achievement rule can lock or unlock a badge with no write to this racer at
+   * all.
+   */
+  useLiveEvent(
+    ['game:recorded', 'game:deleted', 'roster:changed', 'metrics:changed', 'achievement-rules:changed'],
+    refresh,
+  );
 
   if (error) return <ErrorPlate message={error} onRetry={() => void load()} />;
   if (!bundle) return <LoadingRig label="Pulling telemetry" />;

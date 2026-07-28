@@ -26,6 +26,8 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { AdminGuard, CurrentUser, JwtAuthGuard } from '../auth/guards';
+import { ClientId } from '../live/client-id.decorator';
+import { LiveGateway } from '../live/live.gateway';
 import { ScoresService } from './scores.service';
 import type {
   DeleteGameResponse,
@@ -84,7 +86,10 @@ export class RecordGameDto {
 @Controller('scores')
 @UseGuards(JwtAuthGuard)
 export class ScoresController {
-  constructor(private readonly scores: ScoresService) {}
+  constructor(
+    private readonly scores: ScoresService,
+    private readonly live: LiveGateway,
+  ) {}
 
   /**
    * The client's boot call: all three current leaderboards in one response.
@@ -126,6 +131,7 @@ export class ScoresController {
   async record(
     @Body() dto: RecordGameDto,
     @CurrentUser() actor: PublicUser,
+    @ClientId() origin?: string,
   ): Promise<RecordGameResponse> {
     const result = await this.scores.recordGame({
       results: dto.results,
@@ -135,15 +141,24 @@ export class ScoresController {
     });
     const { allTime, monthly, daily } = result.boards;
 
+    const winner = {
+      id: result.winner.id,
+      displayName: result.winner.displayName,
+      avatarUrl: result.winner.avatarUrl,
+      accentColor: result.winner.accentColor,
+      allTime: result.allTime,
+    };
+
+    /*
+     * The hottest event on the wire: every other tab refetches its boards and
+     * runs the winner's flyby. The recording tab has all of this in the response
+     * below already, so it drops the echo on `origin`.
+     */
+    this.live.broadcast({ type: 'game:recorded', origin, gameId: result.game.id, winner });
+
     return {
       game: { id: result.game.id, at: result.game.at },
-      winner: {
-        id: result.winner.id,
-        displayName: result.winner.displayName,
-        avatarUrl: result.winner.avatarUrl,
-        accentColor: result.winner.accentColor,
-        allTime: result.allTime,
-      },
+      winner,
       boards: { allTime, monthly, daily },
     };
   }
@@ -159,7 +174,10 @@ export class ScoresController {
 @Controller('admin/games')
 @UseGuards(JwtAuthGuard, AdminGuard)
 export class AdminGamesController {
-  constructor(private readonly scores: ScoresService) {}
+  constructor(
+    private readonly scores: ScoresService,
+    private readonly live: LiveGateway,
+  ) {}
 
   /** Newest-first race log, optionally scoped to one day. Cursor-paginated. */
   @Get()
@@ -182,7 +200,19 @@ export class AdminGamesController {
    */
   @Delete(':id')
   @HttpCode(200)
-  async remove(@Param('id') id: string): Promise<DeleteGameResponse> {
-    return this.scores.deleteGame(id);
+  async remove(
+    @Param('id') id: string,
+    @ClientId() origin?: string,
+  ): Promise<DeleteGameResponse> {
+    const result = await this.scores.deleteGame(id);
+    // Deleting a race moves every board it touched, and any profile page open
+    // on one of its finishers.
+    this.live.broadcast({
+      type: 'game:deleted',
+      origin,
+      gameId: result.deletedId,
+      dayKey: result.dayKey,
+    });
+    return result;
   }
 }

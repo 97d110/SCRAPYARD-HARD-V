@@ -1,6 +1,8 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { IsBoolean, IsIn, IsNumber, IsOptional, IsPositive, IsString, MaxLength, MinLength } from 'class-validator';
 import { AdminGuard, JwtAuthGuard } from '../auth/guards';
+import { ClientId } from '../live/client-id.decorator';
+import { LiveGateway } from '../live/live.gateway';
 import { AchievementRulesService } from './achievement-rules.service';
 import type { AchievementRule } from '@scrapyard/shared';
 
@@ -60,26 +62,44 @@ export class UpdateRuleDto {
 @Controller('admin/achievement-rules')
 @UseGuards(JwtAuthGuard, AdminGuard)
 export class AdminAchievementRulesController {
-  constructor(private readonly rules: AchievementRulesService) {}
+  constructor(
+    private readonly rules: AchievementRulesService,
+    private readonly live: LiveGateway,
+  ) {}
 
   @Get()
   async all(): Promise<AchievementRule[]> {
     return this.rules.rules();
   }
 
+  /*
+   * Rules are evaluated on read, so retuning a threshold can lock or unlock a
+   * badge on somebody's open profile page with no write to their documents at
+   * all. Broadcasting is the only thing that makes that visible.
+   */
+
   @Post()
-  async create(@Body() dto: CreateRuleDto): Promise<AchievementRule> {
-    return this.rules.createRule(dto);
+  async create(@Body() dto: CreateRuleDto, @ClientId() origin?: string): Promise<AchievementRule> {
+    const rule = await this.rules.createRule(dto);
+    this.live.broadcast({ type: 'achievement-rules:changed', origin });
+    return rule;
   }
 
   @Patch(':id')
-  async update(@Param('id') id: string, @Body() dto: UpdateRuleDto): Promise<AchievementRule> {
-    return this.rules.updateRule(id, dto);
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateRuleDto,
+    @ClientId() origin?: string,
+  ): Promise<AchievementRule> {
+    const rule = await this.rules.updateRule(id, dto);
+    this.live.broadcast({ type: 'achievement-rules:changed', origin });
+    return rule;
   }
 
   @Delete(':id')
   @HttpCode(204)
-  async remove(@Param('id') id: string): Promise<void> {
+  async remove(@Param('id') id: string, @ClientId() origin?: string): Promise<void> {
     await this.rules.deleteRule(id);
+    this.live.broadcast({ type: 'achievement-rules:changed', origin });
   }
 }

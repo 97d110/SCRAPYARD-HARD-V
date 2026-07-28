@@ -44,7 +44,13 @@ export default defineConfig({
      * dev the client-side redirect in App.tsx is what sends you to /login.
      */
     proxy: {
-      '/api': { target: process.env.API_ORIGIN || 'http://localhost:3000', changeOrigin: true },
+      /*
+       * `ws: true` is what carries the live channel's upgrade at /api/live
+       * through to Nest. Without it Vite answers the handshake itself and the
+       * socket never connects in development — while everything else on /api
+       * keeps working, which makes it a confusing thing to debug.
+       */
+      '/api': { target: process.env.API_ORIGIN || 'http://localhost:3000', changeOrigin: true, ws: true },
       '/login': { target: process.env.API_ORIGIN || 'http://localhost:3000', changeOrigin: true },
       '/login-assets': {
         target: process.env.API_ORIGIN || 'http://localhost:3000',

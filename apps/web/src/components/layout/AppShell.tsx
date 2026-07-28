@@ -1,17 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
-import {
-  LogOut,
-  Menu,
-  Shield,
-  Trophy,
-  UserRound,
-  Users,
-  X,
-} from 'lucide-react';
+import { ArrowRight, LogOut, Menu, Shield, Trophy, Users, X } from 'lucide-react';
 import { useApp } from '../../state/AppStore';
+import { useLiveStatus } from '../../state/useLiveEvent';
 import { PunTicker } from '../PunTicker';
-import { ArthurFlyby } from '../arthur/ArthurFlyby';
+import { FinishFlourish } from '../celebration/FinishFlourish';
 import { ArthurShipFx } from '../arthur/ArthurShipFx';
 import { Avatar } from '../ui/primitives';
 
@@ -38,7 +31,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const nav = [
     { to: '/', label: 'Leaderboard', icon: Trophy, end: true },
     { to: '/racers', label: 'Racers', icon: Users, end: false },
-    ...(me ? [{ to: `/racer/${me.id}`, label: 'My Profile', icon: UserRound, end: false }] : []),
     ...(me?.role === 'admin'
       ? [{ to: '/admin', label: 'Admin', icon: Shield, end: false }]
       : []),
@@ -46,8 +38,8 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="relative min-h-screen">
-      {/* Arthur's victory lap, launched from anywhere in the app. */}
-      <ArthurFlyby
+      {/* The finish crest's victory lap, launched from anywhere in the app. */}
+      <FinishFlourish
         runId={celebration?.id ?? null}
         accent={celebration?.accent}
         caption={celebration?.caption}
@@ -55,15 +47,20 @@ export function AppShell({ children }: { children: ReactNode }) {
       />
 
       {/* Top prompter. The Cytactic mark lives inside it now, as a normal
-          child sharing the bar rather than floating above it. */}
-      <div className="fixed inset-x-0 top-0 z-50">
+          child sharing the bar rather than floating above it.
+
+          The padding is the iOS notch: installed to a home screen with
+          `viewport-fit=cover` and a translucent status bar, the top of the
+          viewport is *under* the clock, and without this the ticker would be
+          too. `--safe-top` is 0px everywhere else. */}
+      <div className="fixed inset-x-0 top-0 z-50" style={{ paddingTop: 'var(--safe-top)' }}>
         <PunTicker puns={puns} />
       </div>
 
       {/* Top bar. */}
       <header
         className="fixed inset-x-0 z-40 border-b border-hairline bg-[#06080f]/85 backdrop-blur-xl"
-        style={{ top: 'var(--ticker-h)', height: 'var(--topbar-h)' }}
+        style={{ top: 'calc(var(--ticker-h) + var(--safe-top))', height: 'var(--topbar-h)' }}
       >
         {/* Full-bleed on purpose, not `.shell` — on a wide desktop screen the
             title bar should run to the edges rather than sit capped/centred
@@ -105,10 +102,12 @@ export function AppShell({ children }: { children: ReactNode }) {
             </span>
           </Link>
 
+          <LiveIndicator />
+
           {/* Account + sign-out. Moved into the slide-over below `lg` — on a
               narrow screen this is what was crowding "Scrapyard Hard V" into
               a truncated "SCRAPYA...". */}
-          <div className="ml-auto hidden items-center gap-2 sm:gap-3 lg:flex">
+          <div className="hidden items-center gap-2 sm:gap-3 lg:flex">
             {me && (
               <>
                 <Link
@@ -144,7 +143,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <aside
         className="fixed left-0 z-30 hidden w-[15rem] border-r border-hairline bg-[#06080f]/70 backdrop-blur-lg lg:block 3xl:w-[17rem]"
         style={{
-          top: 'calc(var(--ticker-h) + var(--topbar-h))',
+          top: 'var(--chrome-h)',
           bottom: 0,
         }}
       >
@@ -161,7 +160,12 @@ export function AppShell({ children }: { children: ReactNode }) {
           />
           <aside
             className="absolute inset-y-0 left-0 flex w-[17rem] max-w-[85vw] flex-col border-r border-hairline bg-[#080b16]"
-            style={{ animation: 'rise 260ms cubic-bezier(0.16,1,0.3,1) both' }}
+            style={{
+              animation: 'rise 260ms cubic-bezier(0.16,1,0.3,1) both',
+              // Clears the notch and the home affordance in a standalone window.
+              paddingTop: 'var(--safe-top)',
+              paddingBottom: 'var(--safe-bottom)',
+            }}
           >
             <div className="flex items-center justify-between border-b border-hairline px-4 py-3">
               <ArthurShipFx size={80} accent="#FF6A00" />
@@ -175,7 +179,9 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
 
             {/* Account card — the profile badge that used to live in the top
-                bar, now here since the bar has no room for it below `lg`. */}
+                bar, now here since the bar has no room for it below `lg`. It
+                is also the only route to your own profile now that the
+                "My Profile" nav item is gone, hence the explicit arrow. */}
             {me && (
               <div className="border-b border-hairline p-3">
                 <Link
@@ -184,7 +190,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   style={{ ['--glow' as string]: me.accentColor }}
                 >
                   <Avatar src={me.avatarUrl} name={me.displayName} size={36} accent={me.accentColor} />
-                  <span className="min-w-0 text-left">
+                  <span className="min-w-0 flex-1 text-left">
                     <span className="block truncate font-display text-xs font-bold uppercase tracking-wider text-white">
                       {me.displayName}
                     </span>
@@ -192,6 +198,10 @@ export function AppShell({ children }: { children: ReactNode }) {
                       {me.scores.allTime} {me.scores.allTime === 1 ? 'win' : 'wins'}
                     </span>
                   </span>
+                  <ArrowRight
+                    size={16}
+                    className="shrink-0 text-[var(--text-dim)] transition-all group-hover:translate-x-0.5 group-hover:text-white"
+                  />
                 </Link>
               </div>
             )}
@@ -216,11 +226,70 @@ export function AppShell({ children }: { children: ReactNode }) {
       {/* Page body. */}
       <main
         className="relative lg:pl-[15rem] 3xl:pl-[17rem]"
-        style={{ paddingTop: 'calc(var(--ticker-h) + var(--topbar-h))' }}
+        style={{ paddingTop: 'var(--chrome-h)' }}
       >
-        <div className="shell py-6 sm:py-10 3xl:py-14">{children}</div>
+        {/* The bottom inset is the iOS home-affordance bar; without it the last
+            row of a board sits underneath it in a standalone window. */}
+        <div
+          className="shell py-6 sm:py-10 3xl:py-14"
+          style={{ paddingBottom: 'calc(1.5rem + var(--safe-bottom))' }}
+        >
+          {children}
+        </div>
       </main>
     </div>
+  );
+}
+
+/**
+ * Whether this tab is currently being told about other people's races.
+ *
+ * Worth a permanent place in the chrome rather than a transient toast: on a wall
+ * display, "the board hasn't changed in a while" and "this tab stopped
+ * listening an hour ago" look identical, and only one of them is fine.
+ *
+ * State is carried by the label and by the dot being filled or hollow, so it
+ * doesn't depend on telling two colours apart. The label hides itself on a
+ * narrow bar — that space is what the title needs — leaving the shape.
+ */
+function LiveIndicator() {
+  const status = useLiveStatus();
+
+  const { label, filled, accent } =
+    status === 'live'
+      ? { label: 'Live', filled: true, accent: 'var(--plasma)' }
+      : status === 'connecting'
+        ? { label: 'Syncing', filled: false, accent: 'var(--text-dim)' }
+        : { label: 'Offline', filled: false, accent: 'var(--text-faint)' };
+
+  return (
+    <span
+      className="ml-auto flex shrink-0 items-center gap-1.5 border border-hairline bg-white/[0.02] px-2 py-1.5"
+      title={
+        status === 'live'
+          ? 'Live — races recorded by anyone appear here immediately'
+          : status === 'connecting'
+            ? 'Reconnecting to the live channel'
+            : 'Not connected — this board may be out of date'
+      }
+      aria-live="polite"
+      aria-label={`Live updates: ${label}`}
+    >
+      <span
+        className={`h-2 w-2 shrink-0 rounded-full border ${status === 'connecting' ? 'animate-pulse' : ''}`}
+        style={{
+          borderColor: accent,
+          background: filled ? accent : 'transparent',
+          boxShadow: filled ? `0 0 8px ${accent}` : undefined,
+        }}
+      />
+      <span
+        className="hidden font-display text-[0.55rem] font-bold uppercase tracking-[0.16em] sm:inline"
+        style={{ color: accent }}
+      >
+        {label}
+      </span>
+    </span>
   );
 }
 

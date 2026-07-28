@@ -6,6 +6,7 @@ import { AuthService } from './auth.service';
 import { allowedDomains } from './google.strategy';
 import { CurrentUser, JwtAuthGuard } from './guards';
 import { OAuthExceptionFilter } from './oauth-exception.filter';
+import { LiveGateway } from '../live/live.gateway';
 import type { PublicUser, UserRecord } from '@scrapyard/shared';
 
 @Controller('auth')
@@ -13,6 +14,7 @@ export class AuthController {
   constructor(
     private readonly auth: AuthService,
     private readonly config: ConfigService,
+    private readonly live: LiveGateway,
   ) {}
 
   /**
@@ -60,6 +62,18 @@ export class AuthController {
     @Res() response: Response,
   ): Promise<void> {
     this.auth.issueSession(response, request.user);
+
+    /*
+     * A sign-in is a roster change more often than it looks. upsertFromGoogle
+     * may have created a racer, claimed an admin-created seat (so `claimed`
+     * flips and a real avatar appears where a blank face was), reconciled the
+     * role against ADMIN_EMAILS, or refreshed the Google-sourced name. No
+     * `origin`: this arrives as a browser redirect from Google, not a fetch, so
+     * there is no client id to carry — and the newly signed-in tab is about to
+     * load everything from scratch anyway.
+     */
+    this.live.broadcast({ type: 'roster:changed', reason: 'login', userId: request.user.id });
+
     response.redirect(`${this.appRoot(request)}/?welcome=1`);
   }
 

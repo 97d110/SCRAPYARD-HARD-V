@@ -14,7 +14,8 @@ import type { Pun } from '@scrapyard/shared';
  *    @keyframes transform. It also gives us `onfinish`, which is what advances
  *    to the next pun — no timers to drift out of sync with the animation.
  *  - Duration is derived from distance, so every pun moves at the same *speed*
- *    regardless of how long the text is.
+ *    regardless of how long the text is. That rate is per-breakpoint: desktop
+ *    runs faster than mobile, where the crossing is much shorter.
  *  - Pauses on hover and when the tab is hidden, so it isn't burning frames
  *    behind your back.
  *  - Under `prefers-reduced-motion` nothing moves: each pun is held still and
@@ -24,11 +25,23 @@ import type { Pun } from '@scrapyard/shared';
  */
 export interface PunTickerProps {
   puns: Pun[];
-  /** Pixels per second. Lower is more readable; this thing may live on a wall. */
+  /**
+   * Pixels per second on desktop. Lower is more readable; this thing may live on
+   * a wall.
+   */
   speed?: number;
+  /**
+   * Pixels per second on narrow screens. Deliberately lower than `speed`: a
+   * phone gives a pun a fraction of the width to cross, so the same rate would
+   * leave far less time to read it.
+   */
+  mobileSpeed?: number;
   /** How long each pun is held when motion is reduced. */
   holdMs?: number;
 }
+
+/** Tailwind's `md` — the tablet/desktop line. */
+const DESKTOP_QUERY = '(min-width: 768px)';
 
 const FALLBACK: Pun[] = [
   {
@@ -40,26 +53,36 @@ const FALLBACK: Pun[] = [
   },
 ];
 
-function usePrefersReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(false);
+/**
+ * Evaluated synchronously on the first render rather than in an effect. The
+ * result feeds the animation effect below, so a first-paint guess that corrected
+ * itself a frame later would restart the pun from off-screen right.
+ */
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() =>
+    typeof window === 'undefined' ? false : window.matchMedia(query).matches,
+  );
 
   useEffect(() => {
-    const query = window.matchMedia('(prefers-reduced-motion: reduce)');
-    setReduced(query.matches);
-    const onChange = (event: MediaQueryListEvent) => setReduced(event.matches);
-    query.addEventListener('change', onChange);
-    return () => query.removeEventListener('change', onChange);
-  }, []);
+    const list = window.matchMedia(query);
+    setMatches(list.matches);
+    const onChange = (event: MediaQueryListEvent) => setMatches(event.matches);
+    list.addEventListener('change', onChange);
+    return () => list.removeEventListener('change', onChange);
+  }, [query]);
 
-  return reduced;
+  return matches;
 }
 
-export function PunTicker({ puns, speed = 90, holdMs = 5000 }: PunTickerProps) {
+export function PunTicker({ puns, speed = 70, mobileSpeed = 55, holdMs = 5000 }: PunTickerProps) {
   const items = puns.length > 0 ? puns : FALLBACK;
 
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
-  const reducedMotion = usePrefersReducedMotion();
+  const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
+  const isDesktop = useMediaQuery(DESKTOP_QUERY);
+
+  const activeSpeed = isDesktop ? speed : mobileSpeed;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const itemRef = useRef<HTMLDivElement>(null);
@@ -108,7 +131,7 @@ export function PunTicker({ puns, speed = 90, holdMs = 5000 }: PunTickerProps) {
         { transform: `translate3d(${-itemWidth}px, 0, 0)` },
       ],
       {
-        duration: (distance / speed) * 1000,
+        duration: (distance / activeSpeed) * 1000,
         easing: 'linear',
         fill: 'both',
       },
@@ -124,7 +147,7 @@ export function PunTicker({ puns, speed = 90, holdMs = 5000 }: PunTickerProps) {
     };
     // `paused` is deliberately excluded: pausing must not restart the animation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, items.length, reducedMotion, speed, holdMs, advance]);
+  }, [index, items.length, reducedMotion, activeSpeed, holdMs, advance]);
 
   // Pause/resume without tearing down the animation.
   useEffect(() => {

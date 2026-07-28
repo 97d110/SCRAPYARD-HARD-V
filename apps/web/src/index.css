@@ -34,6 +34,23 @@
   --ticker-h: 44px;
   --topbar-h: 64px;
 
+  /*
+   * Display-cutout insets.
+   *
+   * Zero in a browser tab. Non-zero once the app is installed to an iOS home
+   * screen, where `viewport-fit=cover` plus a translucent status bar means the
+   * viewport extends *under* the clock and the home affordance — so a fixed
+   * element at top: 0 lands behind the notch unless it accounts for this. The
+   * fallback keeps them valid on any engine that doesn't know env().
+   */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+
+  /* Everything the fixed chrome occupies — what page content starts below. */
+  --chrome-h: calc(var(--ticker-h) + var(--topbar-h) + var(--safe-top));
+
   color-scheme: dark;
 }
 
@@ -54,7 +71,14 @@
       radial-gradient(1000px 560px at 92% 4%, rgb(0 229 255 / 0.14), transparent 60%),
       radial-gradient(1400px 800px at 50% 118%, rgb(124 92 255 / 0.14), transparent 66%);
     background-attachment: fixed;
+    /*
+     * `dvh` tracks the viewport as a mobile browser's own chrome slides in and
+     * out, which `vh` does not — with `vh` the page is always as tall as the
+     * *largest* viewport, so there's a strip of scroll that exists only because
+     * the address bar might hide. The `vh` line stays as a fallback.
+     */
     min-height: 100vh;
+    min-height: 100dvh;
     overflow-x: hidden;
   }
 
@@ -286,11 +310,14 @@
   .glow-toxic { --glow: var(--toxic); }
   .glow-violet { --glow: var(--violet); }
 
-  /* Content width ladder: comfortable on laptops, uses the space on walls. */
+  /* Content width ladder: comfortable on laptops, uses the space on walls.
+     `max()` against the safe-area insets keeps content clear of the notch when
+     a phone is held in landscape; both are 0px anywhere else. */
   .shell {
     width: 100%;
     margin-inline: auto;
-    padding-inline: clamp(1rem, 0.5rem + 2vw, 3rem);
+    padding-left: max(clamp(1rem, 0.5rem + 2vw, 3rem), var(--safe-left));
+    padding-right: max(clamp(1rem, 0.5rem + 2vw, 3rem), var(--safe-right));
     max-width: 1400px;
   }
   @media (min-width: 1920px) { .shell { max-width: 1720px; } }

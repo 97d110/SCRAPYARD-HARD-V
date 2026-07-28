@@ -19,6 +19,8 @@ import {
   MinLength,
 } from 'class-validator';
 import { AdminGuard, JwtAuthGuard } from '../auth/guards';
+import { ClientId } from '../live/client-id.decorator';
+import { LiveGateway } from '../live/live.gateway';
 import { ContentService, ContentTypeDescriptor } from './content.service';
 import { ExportService } from '../database/export.service';
 import type { Pun } from '@scrapyard/shared';
@@ -65,6 +67,7 @@ export class AdminContentController {
     private readonly achievements: AchievementsService,
     private readonly metrics: MetricsService,
     private readonly exporter: ExportService,
+    private readonly live: LiveGateway,
   ) {}
 
   /** Cards for the searchable grid menu. */
@@ -99,24 +102,41 @@ export class AdminContentController {
     return this.content.listAllPuns();
   }
 
+  /*
+   * Every pun mutation below broadcasts the same event: the ticker at the top of
+   * every open tab reads this list, so an edit here should reach the wall display
+   * without anyone reloading it.
+   */
+
   @Post('puns')
-  async create(@Body() dto: CreatePunDto): Promise<Pun> {
-    return this.content.createPun(dto.text);
+  async create(@Body() dto: CreatePunDto, @ClientId() origin?: string): Promise<Pun> {
+    const pun = await this.content.createPun(dto.text);
+    this.live.broadcast({ type: 'puns:changed', origin });
+    return pun;
   }
 
   @Patch('puns/:id')
-  async update(@Param('id') id: string, @Body() dto: UpdatePunDto): Promise<Pun> {
-    return this.content.updatePun(id, dto);
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdatePunDto,
+    @ClientId() origin?: string,
+  ): Promise<Pun> {
+    const pun = await this.content.updatePun(id, dto);
+    this.live.broadcast({ type: 'puns:changed', origin });
+    return pun;
   }
 
   @Delete('puns/:id')
   @HttpCode(204)
-  async remove(@Param('id') id: string): Promise<void> {
+  async remove(@Param('id') id: string, @ClientId() origin?: string): Promise<void> {
     await this.content.deletePun(id);
+    this.live.broadcast({ type: 'puns:changed', origin });
   }
 
   @Post('puns/reorder')
-  async reorder(@Body() dto: ReorderPunsDto): Promise<Pun[]> {
-    return this.content.reorderPuns(dto.ids);
+  async reorder(@Body() dto: ReorderPunsDto, @ClientId() origin?: string): Promise<Pun[]> {
+    const puns = await this.content.reorderPuns(dto.ids);
+    this.live.broadcast({ type: 'puns:changed', origin });
+    return puns;
   }
 }

@@ -5,6 +5,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import cookieParser from 'cookie-parser';
 import express from 'express';
 import { AppModule } from './app.module';
+import { LIVE_PATH } from './live/live.constants';
 import { mountLoginAssets, mountSpa } from './web/serve-spa';
 
 async function bootstrap(): Promise<void> {
@@ -93,6 +94,38 @@ async function bootstrap(): Promise<void> {
    */
   mountSpa(app);
 
+  /*
+   * Without this, Nest's onApplicationShutdown/onModuleDestroy hooks never run:
+   * the process takes SIGTERM and exits with them unfired. Two things depend on
+   * them — LiveGateway closing every socket, and MongoService closing the client
+   * so a deploy doesn't leave Atlas holding a pool it will only reap on its own
+   * schedule. Render sends SIGTERM on every deploy and every spin-down, so this
+   * fires several times a day.
+   */
+  app.enableShutdownHooks();
+
+  /*
+   * ...and this is what lets that shutdown actually finish.
+   *
+   * Nest's hook awaits `app.close()`, which awaits `server.close()`, which by
+   * design waits for every open connection to end. A browser sitting on the
+   * leaderboard holds an idle keep-alive connection and a live WebSocket, so it
+   * waits forever: the process hangs until Render gives up and SIGKILLs it, and
+   * every deploy pays that in downtime. Dropping the connections ourselves is
+   * the missing half — clients see the socket close and reconnect to the new
+   * instance, which is what they'd do anyway.
+   *
+   * Registered before enableShutdownHooks' own handler gets to close(), and
+   * `once` so a second SIGTERM still falls through to the default behaviour.
+   */
+  const httpServer = app.getHttpServer();
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+    process.once(signal, () => {
+      logger.log(`${signal} received — closing connections`);
+      httpServer.closeAllConnections();
+    });
+  }
+
   const port = Number(process.env.PORT ?? 3000);
   // Bind explicitly to all interfaces. This is already Nest's default, but
   // stating it means a container can never end up loopback-only and unreachable.
@@ -100,6 +133,7 @@ async function bootstrap(): Promise<void> {
 
   logger.log(`API listening on http://localhost:${port}/api`);
   logger.log(`Login page at http://localhost:${port}/login`);
+  logger.log(`Live updates at ws://localhost:${port}${LIVE_PATH}`);
   logger.log(
     origins.length > 0
       ? `CORS origins: ${origins.join(', ')}`

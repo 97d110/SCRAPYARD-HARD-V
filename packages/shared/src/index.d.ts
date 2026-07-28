@@ -419,6 +419,120 @@ export interface ExportSummary {
   filename: string;
 }
 
+// ─── Live updates ──────────────────────────────────────────────────────────
+
+/**
+ * What the server pushes down the WebSocket at `/api/live` when the database
+ * changes, so every other open tab catches up without polling.
+ *
+ * ── These are notifications, not data ───────────────────────────────────────
+ *
+ * An event says *what changed*, and the client refetches the affected read
+ * endpoint. It deliberately does not carry the new leaderboards, because that
+ * would put a second copy of derived state on the wire and two races landing
+ * out of order could leave a board stale — the same drift the file-based design
+ * suffered from. A refetch always lands on the current aggregation.
+ *
+ * The one exception is the winner block on `game:recorded`: the celebration
+ * needs a name, an accent and a win count at the instant it fires, and none of
+ * that is recoverable from "something changed".
+ */
+export type LiveEventType =
+  | 'game:recorded'
+  | 'game:deleted'
+  | 'roster:changed'
+  | 'puns:changed'
+  | 'metrics:changed'
+  | 'achievement-rules:changed';
+
+/** Why the roster moved. Only `profile` can be triggered by a non-admin. */
+export type RosterChangeReason = 'created' | 'deleted' | 'profile' | 'login';
+
+interface LiveEventBase {
+  /**
+   * The `X-Scrapyard-Client` id of the tab whose request caused this, when the
+   * change arrived over HTTP. Absent for changes with no originating tab (a
+   * Google sign-in redirect).
+   *
+   * This says who sent the request — *not* that they already know the result.
+   * A tab only skips its own echo for the events whose response carries the
+   * whole effect; see `SELF_APPLIED` in `apps/web/src/lib/live.ts`. Most
+   * responses don't (a game delete answers with ids, not boards), so those
+   * echoes have to be processed by the originating tab like any other.
+   */
+  origin?: string;
+}
+
+export interface GameRecordedEvent extends LiveEventBase {
+  type: 'game:recorded';
+  gameId: string;
+  /** The first-place finisher — everything the flyby needs, nothing more. */
+  winner: {
+    id: string;
+    displayName: string;
+    avatarUrl: string;
+    accentColor: string;
+    /** Their all-time win count after this race. */
+    allTime: number;
+  };
+}
+
+export interface GameDeletedEvent extends LiveEventBase {
+  type: 'game:deleted';
+  gameId: string;
+  dayKey: string;
+}
+
+export interface RosterChangedEvent extends LiveEventBase {
+  type: 'roster:changed';
+  reason: RosterChangeReason;
+  /** The racer that moved, when it was a single one. */
+  userId?: string;
+}
+
+/*
+ * Config and content changes, which carry nothing beyond "refetch this".
+ *
+ * Three separate declarations rather than one with a three-way `type`, so that
+ * every member of `LiveEvent` is discriminated by a single literal. That is what
+ * lets `switch (frame.type)` narrow, and what lets a caller pick one event out
+ * of a mixed list by its type alone.
+ */
+export interface PunsChangedEvent extends LiveEventBase {
+  type: 'puns:changed';
+}
+
+export interface MetricsChangedEvent extends LiveEventBase {
+  type: 'metrics:changed';
+}
+
+export interface AchievementRulesChangedEvent extends LiveEventBase {
+  type: 'achievement-rules:changed';
+}
+
+export type LiveEvent =
+  | GameRecordedEvent
+  | GameDeletedEvent
+  | RosterChangedEvent
+  | PunsChangedEvent
+  | MetricsChangedEvent
+  | AchievementRulesChangedEvent;
+
+/**
+ * The first frame on a fresh connection. Purely a handshake receipt: it proves
+ * the cookie was accepted, and `serverId` changes on every boot so a client can
+ * tell a dropped connection (same server) from a redeploy (new one).
+ */
+export interface LiveHelloFrame {
+  type: 'live:hello';
+  at: string;
+  userId: string;
+  serverId: string;
+}
+
+/** An event as it goes over the wire — plus when the server sent it. */
+export type LiveFrame = (LiveEvent & { at: string }) | LiveHelloFrame;
+
 /** Response from POST /api/scores/record. */
 export interface RecordGameResponse {
   game: { id: string; at: string };

@@ -43,6 +43,7 @@ import {
   type UpdateRuleInput,
 } from '../lib/api';
 import { useApp } from '../state/AppStore';
+import { useLiveEvent } from '../state/useLiveEvent';
 import { ArthurShipFx } from '../components/arthur/ArthurShipFx';
 import {
   Avatar,
@@ -112,6 +113,13 @@ export function AdminPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Every card on this grid shows a count, and each of these events moves one
+  // of them. `load` doesn't blank `types`, so this refreshes without a flicker.
+  useLiveEvent(
+    ['game:recorded', 'game:deleted', 'roster:changed', 'puns:changed', 'metrics:changed', 'achievement-rules:changed'],
+    load,
+  );
 
   const filtered = useMemo(() => {
     if (!types) return [];
@@ -443,6 +451,10 @@ function PunsEditor({ onBack }: { onBack: () => void }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Another admin editing the same list — reordering it, in particular — would
+  // otherwise leave this one dragging rows around a stale copy.
+  useLiveEvent(['puns:changed'], load);
 
   /**
    * Every mutation refreshes the banner too, so changes are visible at once.
@@ -1075,6 +1087,8 @@ function MetricsEditor({ onBack }: { onBack: () => void }) {
     void load();
   }, [load]);
 
+  useLiveEvent(['metrics:changed'], load);
+
   const run = async (action: () => Promise<unknown>): Promise<boolean> => {
     setBusy(true);
     setError(null);
@@ -1334,6 +1348,10 @@ function AchievementsEditor({ onBack }: { onBack: () => void }) {
     void load();
   }, [load]);
 
+  // Both lists this panel edits against: a rule points at a metric, so a metric
+  // disappearing elsewhere matters here as much as a rule changing.
+  useLiveEvent(['achievement-rules:changed', 'metrics:changed'], load);
+
   const run = async (action: () => Promise<unknown>): Promise<boolean> => {
     setBusy(true);
     setError(null);
@@ -1549,6 +1567,9 @@ function GamesEditor({ onBack }: { onBack: () => void }) {
 
   const usersById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
 
+  const [pagedDeeper, setPagedDeeper] = useState(false);
+  const [stale, setStale] = useState(false);
+
   const load = useCallback(async (scope: string) => {
     setError(null);
     setGames(null);
@@ -1556,6 +1577,8 @@ function GamesEditor({ onBack }: { onBack: () => void }) {
       const page = await api.admin.games.list({ day: scope || undefined });
       setGames(page.games);
       setNextBefore(page.nextBefore);
+      setPagedDeeper(false);
+      setStale(false);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not load the race log');
       setGames([]);
@@ -1566,6 +1589,30 @@ function GamesEditor({ onBack }: { onBack: () => void }) {
     void load(day);
   }, [load, day]);
 
+  /** Page one again, without blanking the list first. */
+  const refreshFirstPage = useCallback(async () => {
+    const page = await api.admin.games.list({ day: day || undefined }).catch(() => null);
+    if (!page) return;
+    setGames(page.games);
+    setNextBefore(page.nextBefore);
+    setPagedDeeper(false);
+    setStale(false);
+  }, [day]);
+
+  /*
+   * A race landing elsewhere goes to the top of this list, which is on screen —
+   * so refresh it. Unless the admin has paged further down, in which case
+   * silently collapsing them back to page one mid-triage would be worse than
+   * being briefly out of date: say so and let them choose.
+   */
+  useLiveEvent(['game:recorded', 'game:deleted'], () => {
+    if (pagedDeeper) {
+      setStale(true);
+      return;
+    }
+    void refreshFirstPage();
+  });
+
   const loadMore = async () => {
     if (!nextBefore) return;
     setLoadingMore(true);
@@ -1573,6 +1620,7 @@ function GamesEditor({ onBack }: { onBack: () => void }) {
       const page = await api.admin.games.list({ day: day || undefined, before: nextBefore });
       setGames((current) => [...(current ?? []), ...page.games]);
       setNextBefore(page.nextBefore);
+      setPagedDeeper(true);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not load more races');
     } finally {
@@ -1658,6 +1706,17 @@ function GamesEditor({ onBack }: { onBack: () => void }) {
       {lastResult && (
         <p className="flex items-center gap-2 border border-toxic/40 bg-toxic/10 px-3 py-2 text-xs text-toxic">
           <Check size={13} /> {lastResult}
+        </p>
+      )}
+      {stale && (
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-2 border border-hairline bg-white/[0.03] px-3 py-2 text-xs text-[var(--text-dim)]">
+          <span>The race log changed while you were looking further down it.</span>
+          <button
+            className="font-display text-[0.6rem] font-bold uppercase tracking-[0.16em] text-plasma underline decoration-dotted underline-offset-4 transition hover:text-white"
+            onClick={() => void refreshFirstPage()}
+          >
+            Reload from the top
+          </button>
         </p>
       )}
 

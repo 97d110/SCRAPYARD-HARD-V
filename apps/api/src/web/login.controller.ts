@@ -22,7 +22,7 @@ export class LoginController {
     @Query('authError') authError?: string,
   ): Promise<void> {
     // Already signed in? No reason to show a login wall.
-    if (await this.session.isAuthenticated(request)) {
+    if (await this.session.isAuthenticated(request.headers)) {
       response.redirect('/');
       return;
     }

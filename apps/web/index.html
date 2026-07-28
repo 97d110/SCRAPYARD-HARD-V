@@ -20,9 +20,16 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icons/arthur-192.png" />
 
-    <!-- PWA: installable on desktop and mobile home screens. -->
+    <!-- PWA: installable on desktop and mobile home screens.
+
+         `black-translucent` puts the app *under* the iOS status bar, which is
+         why the viewport is `viewport-fit=cover` above and why the chrome pads
+         itself by `--safe-top` (see index.css). Drop one and the other two are
+         wrong. -->
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/icons/arthur-192.png" />
+    <!-- The standard name, plus Apple's older one that iOS still requires. -->
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Scrapyard" />

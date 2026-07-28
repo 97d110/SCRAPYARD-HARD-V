@@ -28,7 +28,7 @@ export default function App() {
  * back to the server-rendered wall.
  */
 function Gate() {
-  const { status, error, reload } = useApp();
+  const { status, error, offline, reload } = useApp();
 
   if (status === 'anonymous') {
     window.location.replace('/login');
@@ -40,7 +40,22 @@ function Gate() {
   if (status === 'error') {
     return (
       <div className="grid min-h-screen place-items-center px-4">
-        <ErrorPlate message={error ?? 'Unknown error'} onRetry={() => void reload()} />
+        {/*
+          Installed as a PWA, the service worker will happily open the app shell
+          from cache with no network behind it — so this branch is what an
+          offline launch actually lands on. Saying so is more useful than a raw
+          fetch error, and the store retries by itself the moment the link is
+          back. Every board is a live aggregation, so there is nothing to show
+          from cache here.
+        */}
+        <ErrorPlate
+          message={
+            offline
+              ? "You're offline. Scrapyard reads every board live, so there's nothing to show until the link is back — this will retry itself."
+              : error ?? 'Unknown error'
+          }
+          onRetry={() => void reload()}
+        />
       </div>
     );
   }

@@ -95,7 +95,7 @@ export function mountSpa(app: NestExpressApplication): void {
   app.use(async (request: Request, response: Response, next: NextFunction) => {
     if (isOpenPath(request.originalUrl)) return next();
 
-    if (await session.isAuthenticated(request)) return next();
+    if (await session.isAuthenticated(request.headers)) return next();
 
     // Asset requests (JS/CSS/map) get a bare 401 rather than an HTML redirect —
     // redirecting a script tag to a login page just yields a confusing parse
