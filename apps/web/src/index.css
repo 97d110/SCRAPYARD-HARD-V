@@ -453,14 +453,14 @@
   animation: none;
 }
 
-/* ── Hero ship halo + ambient sparks ─────────────────────────────────────────
- * The hero spaceship idles with a slow breathing glow behind it. Separately,
- * each spark spends nearly its whole cycle invisible at scale(0) and only
- * flares in the last slice of it — shooting out to (--dx, --dy) and fading —
- * so with nine sparks on staggered durations/delays the bursts read as
- * occasional flickers of light escaping from behind the hull, never a
- * constant sparkler. (The global reduced-motion rule above already collapses
- * both to a single frame for anyone who's asked for less movement.)
+/* ── Ship halo + ambient sparks ──────────────────────────────────────────────
+ * The ship idles with a slow breathing glow behind it. Separately, each spark
+ * spends nearly its whole cycle invisible at scale(0) and only flares in the
+ * last slice of it — shooting out to (--dx, --dy) and fading — so with eight
+ * sparks on staggered durations/delays the bursts read as occasional flickers
+ * of light escaping from behind the hull, never a constant sparkler. (The
+ * global reduced-motion rule above already collapses both to a single frame
+ * for anyone who's asked for less movement.)
  */
 @keyframes hero-halo-pulse {
   0%, 100% { opacity: 0.35; transform: scale(0.92); }

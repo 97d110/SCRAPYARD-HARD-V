@@ -12,19 +12,19 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../state/AppStore';
 import { PunTicker } from '../PunTicker';
-import { ArthurLottie } from '../arthur/ArthurLottie';
 import { ArthurFlyby } from '../arthur/ArthurFlyby';
+import { ArthurLottie } from '../arthur/ArthurLottie';
 import { Avatar } from '../ui/primitives';
 
 /**
- * Deterministic scatter for the wordmark ship's ambient sparks — generated
+ * Deterministic scatter for the mobile-menu ship's ambient sparks — generated
  * once, not per render. Each one idles for most of its own cycle and only
  * briefly flares outward (see `.hero-spark` in index.css); uneven per-spark
  * duration/delay is what keeps the bursts from firing in lockstep.
  */
 const SHIP_SPARKS = Array.from({ length: 8 }, (_, i) => {
   const angle = (i / 8) * Math.PI * 2 + i * 0.5;
-  const dist = 20 + (i % 3) * 8;
+  const dist = 28 + (i % 3) * 11;
   return {
     id: i,
     dx: Math.round(Math.cos(angle) * dist),
@@ -96,39 +96,6 @@ export function AppShell({ children }: { children: ReactNode }) {
           </button>
 
           <Link to="/" className="group flex min-w-0 items-center gap-3">
-            {/* The ship — bigger than before, with a soft breathing halo and
-                sparks that shoot outward and fade every so often rather than
-                continuously. */}
-            <span
-              className="relative shrink-0 transition-transform group-hover:scale-110"
-              aria-hidden="true"
-            >
-              <span
-                className="hero-ship-halo pointer-events-none absolute rounded-full"
-                style={{
-                  inset: '-8%',
-                  background: 'radial-gradient(circle, rgba(255,106,0,0.55), transparent 60%)',
-                  filter: 'blur(4px)',
-                }}
-              />
-              {SHIP_SPARKS.map((spark) => (
-                <span
-                  key={spark.id}
-                  className="hero-spark pointer-events-none absolute left-1/2 top-1/2 rounded-full"
-                  style={{
-                    width: spark.size,
-                    height: spark.size,
-                    background: spark.white ? '#fff' : '#FF6A00',
-                    boxShadow: '0 0 6px #FF6A00',
-                    ['--dx' as string]: `${spark.dx}px`,
-                    ['--dy' as string]: `${spark.dy}px`,
-                    ['--dur' as string]: `${spark.duration}s`,
-                    animationDelay: `${spark.delay}s`,
-                  }}
-                />
-              ))}
-              <ArthurLottie size={56} accent="#FF6A00" className="relative" />
-            </span>
             <span className="min-w-0">
               <span className="headline block truncate text-lg leading-none sm:text-2xl 3xl:text-3xl">
                 Scrapyard Hard V
@@ -145,7 +112,10 @@ export function AppShell({ children }: { children: ReactNode }) {
             </span>
           </Link>
 
-          <div className="ml-auto flex items-center gap-2 sm:gap-3">
+          {/* Account + sign-out. Moved into the slide-over below `lg` — on a
+              narrow screen this is what was crowding "Scrapyard Hard V" into
+              a truncated "SCRAPYA...". */}
+          <div className="ml-auto hidden items-center gap-2 sm:gap-3 lg:flex">
             {me && (
               <>
                 <Link
@@ -200,8 +170,36 @@ export function AppShell({ children }: { children: ReactNode }) {
             className="absolute inset-y-0 left-0 flex w-[17rem] max-w-[85vw] flex-col border-r border-hairline bg-[#080b16]"
             style={{ animation: 'rise 260ms cubic-bezier(0.16,1,0.3,1) both' }}
           >
-            <div className="flex items-center justify-between border-b border-hairline px-4 py-4">
-              <span className="headline text-lg">Scrapyard Hard V</span>
+            <div className="flex items-center justify-between border-b border-hairline px-4 py-3">
+              {/* The ship, with the same breathing halo + occasional outward
+                  sparks that used to sit next to the desktop title. */}
+              <span className="relative shrink-0" aria-hidden="true">
+                <span
+                  className="hero-ship-halo pointer-events-none absolute rounded-full"
+                  style={{
+                    inset: '-8%',
+                    background: 'radial-gradient(circle, rgba(255,106,0,0.55), transparent 60%)',
+                    filter: 'blur(4px)',
+                  }}
+                />
+                {SHIP_SPARKS.map((spark) => (
+                  <span
+                    key={spark.id}
+                    className="hero-spark pointer-events-none absolute left-1/2 top-1/2 rounded-full"
+                    style={{
+                      width: spark.size,
+                      height: spark.size,
+                      background: spark.white ? '#fff' : '#FF6A00',
+                      boxShadow: '0 0 6px #FF6A00',
+                      ['--dx' as string]: `${spark.dx}px`,
+                      ['--dy' as string]: `${spark.dy}px`,
+                      ['--dur' as string]: `${spark.duration}s`,
+                      animationDelay: `${spark.delay}s`,
+                    }}
+                  />
+                ))}
+                <ArthurLottie size={80} accent="#FF6A00" className="relative" />
+              </span>
               <button
                 className="btn btn-ghost !px-2 !py-1.5"
                 onClick={() => setMenuOpen(false)}
@@ -210,7 +208,42 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <X size={16} />
               </button>
             </div>
+
+            {/* Account card — the profile badge that used to live in the top
+                bar, now here since the bar has no room for it below `lg`. */}
+            {me && (
+              <div className="border-b border-hairline p-3">
+                <Link
+                  to={`/racer/${me.id}`}
+                  className="group flex items-center gap-3 border border-hairline bg-white/[0.02] px-3 py-2.5 transition hover:border-plasma/60"
+                  style={{ ['--glow' as string]: me.accentColor }}
+                >
+                  <Avatar src={me.avatarUrl} name={me.displayName} size={36} accent={me.accentColor} />
+                  <span className="min-w-0 text-left">
+                    <span className="block truncate font-display text-xs font-bold uppercase tracking-wider text-white">
+                      {me.displayName}
+                    </span>
+                    <span className="block font-mono text-[0.65rem] text-[var(--text-dim)]">
+                      {me.scores.allTime} {me.scores.allTime === 1 ? 'win' : 'wins'}
+                    </span>
+                  </span>
+                </Link>
+              </div>
+            )}
+
             <SideNav items={nav} />
+
+            {me && (
+              <div className="border-t border-hairline p-3">
+                <button
+                  className="btn btn-ghost flex w-full items-center justify-center gap-2 !py-2.5"
+                  onClick={() => void logout()}
+                >
+                  <LogOut size={16} />
+                  Sign out
+                </button>
+              </div>
+            )}
           </aside>
         </div>
       )}
