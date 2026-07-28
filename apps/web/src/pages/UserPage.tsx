@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Calendar, Crosshair, Flame, Pencil, RotateCcw, Save, Skull, Swords, Upload, X } from 'lucide-react';
+import { Calendar, Crosshair, Flame, LogOut, Pencil, RotateCcw, Save, Skull, Swords, Upload, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { useApp } from '../state/AppStore';
 import { useLiveEvent } from '../state/useLiveEvent';
@@ -322,7 +322,47 @@ export function UserPage() {
           </Panel>
         </div>
       )}
+
+      {/*
+        Sign out. Only on your own page, and deliberately last: it used to be a
+        button in the title bar and another in the mobile menu, both of them one
+        mis-tap away from something you actually wanted. Down here you have to
+        mean it, and there is exactly one of it on both layouts.
+      */}
+      {isMe && <SignOutPanel email={user.email} />}
     </div>
+  );
+}
+
+function SignOutPanel({ email }: { email: string }) {
+  const { logout } = useApp();
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <Panel className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <Label>Session</Label>
+        <p className="mt-1 truncate font-mono text-xs text-[var(--text-dim)]">
+          Signed in as {email}
+        </p>
+      </div>
+
+      <NeonButton
+        variant="ghost"
+        accent="#FF3B30"
+        className="shrink-0"
+        disabled={busy}
+        onClick={() => {
+          setBusy(true);
+          // Deliberately not reset on failure: logout() navigates away on both
+          // paths, so anything after this is a page that's already leaving.
+          void logout();
+        }}
+      >
+        <LogOut size={15} />
+        {busy ? 'Signing out…' : 'Sign out'}
+      </NeonButton>
+    </Panel>
   );
 }
 

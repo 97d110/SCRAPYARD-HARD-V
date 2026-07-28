@@ -121,7 +121,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         status: 'ready',
         error: null,
         offline: false,
-        me,
+        /*
+         * Prefer the roster's copy of ourselves. `/auth/me` resolves through the
+         * JWT strategy, which has a user document but no win counts — joining
+         * them there would put a scoreboard aggregation on every authenticated
+         * request, for a number only the account badge reads. The roster is
+         * already here and already carries them, so take it from that: it's the
+         * difference between the badge in the side menu saying "0 wins" until
+         * something else happens to refresh it, and it being right on first
+         * paint.
+         */
+        me: users.find((user) => user.id === me.id) ?? me,
         users,
         boards,
         puns,
