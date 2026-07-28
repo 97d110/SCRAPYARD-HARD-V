@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { ArthurShip } from './arthur/ArthurShip';
 import type { Pun } from '@scrapyard/shared';
 
@@ -141,65 +142,81 @@ export function PunTicker({ puns, speed = 90, holdMs = 5000 }: PunTickerProps) {
 
   return (
     <div
-      ref={containerRef}
-      className="scanlines relative isolate w-full overflow-hidden border-b border-hairline bg-[#06080f]/90 backdrop-blur"
+      className="flex h-full w-full items-stretch border-b border-hairline bg-[#06080f]/90 backdrop-blur"
       style={{ height: 'var(--ticker-h)' }}
-      onMouseEnter={() => setPaused(true)}
-      onMouseLeave={() => setPaused(false)}
-      role="marquee"
-      aria-label="BlazeRush puns"
     >
-      {/* Hot/cold wash behind the text. */}
-      <div
-        className="pointer-events-none absolute inset-0 -z-10 opacity-70"
-        style={{
-          background:
-            'linear-gradient(90deg, rgb(255 106 0 / 0.16), transparent 30%, transparent 70%, rgb(0 229 255 / 0.16))',
-        }}
-      />
-      {/* Edge fades so text dissolves rather than clipping. */}
-      <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-16 bg-gradient-to-r from-[#06080f] to-transparent sm:w-28" />
-      <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-16 bg-gradient-to-l from-[#06080f] to-transparent sm:w-28" />
-
-      {/*
-        Keyed on the pun id so React remounts per pun. That guarantees a clean
-        element for each animation instead of reusing one mid-flight.
-      */}
-      <div
-        key={current.id}
-        ref={itemRef}
-        className="absolute left-0 top-0 flex h-full w-max items-center"
-        style={
-          reducedMotion
-            ? {
-                // Held still and centred; cross-fade handles the transition.
-                left: '50%',
-                transform: 'translateX(-50%)',
-                animation: 'pun-fade 600ms ease-out both',
-              }
-            : {
-                // Parked off-screen right until the animation takes over, so
-                // there's no flash of an unpositioned pun on the first frame.
-                transform: 'translate3d(100vw, 0, 0)',
-                willChange: 'transform',
-              }
-        }
+      {/* Cytactic mark — a normal child of the bar, sharing its space with
+          the marquee rather than floating above it. */}
+      <Link
+        to="/"
+        className="flex shrink-0 items-center px-3 transition-transform hover:scale-105 sm:px-4"
+        aria-label="Cytactic — home"
       >
-        <span className="whitespace-nowrap px-5 font-body text-[0.78rem] font-medium tracking-wide text-[#cfd8ff] sm:text-sm 3xl:text-base">
-          {current.text}
-        </span>
-        {/* Arthur rides along behind each pun, spinning. */}
-        <span className="grid shrink-0 place-items-center px-2" aria-hidden="true">
-          <ArthurShip size={34} spin accent={accent} />
-        </span>
-      </div>
+        <img src="/cytactic-logo.png" alt="Cytactic" className="h-7 w-7 sm:h-8 sm:w-8" draggable={false} />
+      </Link>
+      <span className="my-2.5 w-px shrink-0 bg-white/10" aria-hidden="true" />
 
-      <style>{`
-        @keyframes pun-fade {
-          from { opacity: 0; }
-          to   { opacity: 1; }
-        }
-      `}</style>
+      {/* The marquee, confined to whatever width is left of the bar. */}
+      <div
+        ref={containerRef}
+        className="scanlines relative isolate min-w-0 flex-1 overflow-hidden"
+        onMouseEnter={() => setPaused(true)}
+        onMouseLeave={() => setPaused(false)}
+        role="marquee"
+        aria-label="BlazeRush puns"
+      >
+        {/* Hot/cold wash behind the text. */}
+        <div
+          className="pointer-events-none absolute inset-0 -z-10 opacity-70"
+          style={{
+            background:
+              'linear-gradient(90deg, rgb(255 106 0 / 0.16), transparent 30%, transparent 70%, rgb(0 229 255 / 0.16))',
+          }}
+        />
+        {/* Edge fades so text dissolves rather than clipping. */}
+        <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-16 bg-gradient-to-r from-[#06080f] to-transparent sm:w-28" />
+        <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-16 bg-gradient-to-l from-[#06080f] to-transparent sm:w-28" />
+
+        {/*
+          Keyed on the pun id so React remounts per pun. That guarantees a clean
+          element for each animation instead of reusing one mid-flight.
+        */}
+        <div
+          key={current.id}
+          ref={itemRef}
+          className="absolute left-0 top-0 flex h-full w-max items-center"
+          style={
+            reducedMotion
+              ? {
+                  // Held still and centred; cross-fade handles the transition.
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  animation: 'pun-fade 600ms ease-out both',
+                }
+              : {
+                  // Parked off-screen right until the animation takes over, so
+                  // there's no flash of an unpositioned pun on the first frame.
+                  transform: 'translate3d(100vw, 0, 0)',
+                  willChange: 'transform',
+                }
+          }
+        >
+          <span className="whitespace-nowrap px-5 font-body text-[0.78rem] font-medium tracking-wide text-[#cfd8ff] sm:text-sm 3xl:text-base">
+            {current.text}
+          </span>
+          {/* Arthur rides along behind each pun, spinning. */}
+          <span className="grid shrink-0 place-items-center px-2" aria-hidden="true">
+            <ArthurShip size={34} spin accent={accent} />
+          </span>
+        </div>
+
+        <style>{`
+          @keyframes pun-fade {
+            from { opacity: 0; }
+            to   { opacity: 1; }
+          }
+        `}</style>
+      </div>
     </div>
   );
 }

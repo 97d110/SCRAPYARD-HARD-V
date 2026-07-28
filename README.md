@@ -65,13 +65,29 @@ Push the repo to GitHub, then **Dashboard → New → Blueprint** and point it a
 the repo. [`render.yaml`](render.yaml) declares the whole service: free plan,
 Frankfurt, build, start command, health check.
 
-Render prompts you for the three secrets the Blueprint marks `sync: false`:
+Render prompts you for the four secrets the Blueprint marks `sync: false`:
 
 ```dotenv
 MONGODB_URI=mongodb+srv://user:pass@cluster.xxxxx.mongodb.net/?retryWrites=true&w=majority
 GOOGLE_CLIENT_ID=....apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=GOCSPX-...
 GOOGLE_CALLBACK_URL=https://<your-app>.onrender.com/api/auth/google/callback
+DATA_ENCRYPTION_KEY=<output of `openssl rand -base64 32`>
+```
+
+`DATA_ENCRYPTION_KEY` encrypts every racer's email and Google id at rest —
+keep a copy of it somewhere durable outside Render. Unlike `JWT_SECRET`,
+losing or rotating it doesn't just log people out; it makes existing racers'
+email/Google id permanently undecryptable, and they can no longer be looked
+up on login.
+
+**Upgrading a deployment that already has real racers?** Set
+`DATA_ENCRYPTION_KEY` and run the one-off migration against that database
+*before* deploying this build — it encrypts everyone's existing plaintext
+email/googleId in place (games, scores and achievements aren't touched):
+
+```bash
+DATA_ENCRYPTION_KEY="..." MONGODB_URI="mongodb+srv://..." npm run migrate:encrypt-users
 ```
 
 Everything else — `MONGODB_DB`, `ALLOWED_WORKSPACE_DOMAINS`, `ADMIN_EMAILS`,
@@ -129,7 +145,7 @@ automatically. **Add the new callback URL to the Google client and update
 
 ```bash
 npm install
-cp apps/api/.env.example apps/api/.env    # fill in MONGODB_URI + Google creds
+cp apps/api/.env.example apps/api/.env    # fill in MONGODB_URI, Google creds, DATA_ENCRYPTION_KEY
 npm run seed                              # optional demo racers
 
 npm run dev        # two ports, hot reload  — day to day
@@ -154,7 +170,7 @@ MONGODB_URI="mongodb://localhost:27017" MONGODB_DB=scrapyard_smoke \
 ALLOWED_WORKSPACE_DOMAINS=cytactic.com ADMIN_EMAILS=amit@cytactic.com \
 GOOGLE_CLIENT_ID=dummy GOOGLE_CLIENT_SECRET=dummy \
 GOOGLE_CALLBACK_URL=http://localhost:3000/api/auth/google/callback \
-JWT_SECRET=smoke npm run smoke
+JWT_SECRET=smoke DATA_ENCRYPTION_KEY=$(openssl rand -base64 32) npm run smoke
 ```
 
 Boots the real Nest app, seeds, and exercises every route: auth gate, domain

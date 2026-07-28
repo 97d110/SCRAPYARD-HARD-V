@@ -3,14 +3,16 @@ import { Collection, Db, IndexDescription, MongoClient } from 'mongodb';
 import type { UserRole } from '@scrapyard/shared';
 
 /**
- * The database. Three collections, no derived state.
+ * The database. A handful of collections, no derived state.
  *
- *   users    one document per racer, _id = the Google `sub` claim
- *   wins     one immutable document per win — the only thing ever written
- *   content  a single 'puns' document
+ *   users            one document per racer, _id = the Google `sub` claim
+ *   games            one immutable document per race — the event log
+ *   metrics          admin-defined captured & formula metrics (config)
+ *   achievementRules admin-defined metric-threshold badges (config)
+ *   content          a single 'puns' document
  *
- * There is deliberately no scoreboard collection. Boards are aggregations over
- * `wins`, computed on read. See ScoreboardRepository.
+ * There is deliberately no scoreboard collection. Boards and achievements are
+ * aggregations over `games`, computed on read. See ScoreboardRepository.
  *
  * ── One client, reused ──────────────────────────────────────────────────────
  *
@@ -28,9 +30,32 @@ import type { UserRole } from '@scrapyard/shared';
  */
 
 export interface UserDoc {
+  /**
+   * Permanent, opaque, and deliberately NOT the Google id.
+   *
+   * A racer can exist before they ever sign in — an admin creates them by
+   * email so the crew can score them from day one. That racer has no Google
+   * id yet, and when they finally sign in we must attach it *without* changing
+   * `_id`, because every document in `wins` points at it. Mongo can't rename
+   * an `_id`, so the two identities have to be separate fields.
+   *
+   * For racers who signed in first, `_id` happens to equal `googleId`. That is
+   * history, not a rule — never rely on it.
+   */
   _id: string;
-  googleId: string;
-  email: string;
+  /**
+   * Email and Google id are the only two fields here that aren't already
+   * shown to every signed-in teammate, so they're the only two encrypted.
+   * `*Enc` is AES-256-GCM ciphertext (decrypt with `decryptField`); `*Hash`
+   * is an HMAC-SHA-256 blind index — the only thing Mongo can match or
+   * enforce uniqueness on, since the ciphertext itself is never the same
+   * twice for the same value. See `common/crypto.ts`.
+   */
+  emailEnc: string;
+  emailHash: string;
+  /** Absent until the racer completes a Google sign-in and claims the seat. */
+  googleIdEnc?: string;
+  googleIdHash?: string;
   domain: string;
   role: UserRole;
   googleFullName: string;
@@ -42,18 +67,81 @@ export interface UserDoc {
   accentColor: string;
   createdAt: string;
   updatedAt: string;
-  lastLoginAt: string;
+  /** Absent for a racer who has never signed in. */
+  lastLoginAt?: string;
 }
 
-export interface WinDoc {
+/** One racer's finish inside a game document. */
+export interface GameResultDoc {
+  racerId: string;
+  place: number;
+  gameScore: number;
+  /** Captured metric values, keyed by metric id. kills/deaths derive from events. */
+  stats: Record<string, number>;
+}
+
+/** One directed kill inside a game. `revenge` is resolved at write time. */
+export interface KillEventDoc {
+  killerId: string;
+  victimId: string;
+  revenge: boolean;
+}
+
+/**
+ * One document in the `games` collection — an immutable race event.
+ *
+ * Replaces the old single-winner `wins` document. Each game carries 2–4
+ * finishers with their place, in-game score and captured stats. Boards and
+ * achievements are aggregations over this collection, computed on read, so
+ * there is still nothing derived to keep in step.
+ */
+export interface GameDoc {
   _id: string;
-  userId: string;
   /** Stored as a Date so Mongo can sort and range-query it natively. */
   at: Date;
   monthKey: string;
   dayKey: string;
   awardedBy: string;
   note?: string;
+  results: GameResultDoc[];
+  /** The kill log — killer→victim events with revenge resolved. */
+  events: KillEventDoc[];
+}
+
+/**
+ * An admin-defined metric (captured or formula). Built-in derived metrics are
+ * code constants, not documents — see metrics.constants.ts.
+ */
+export interface MetricDoc {
+  _id: string;
+  label: string;
+  icon: string;
+  unit?: string;
+  description?: string;
+  kind: 'captured' | 'formula';
+  aggregation: 'sum' | 'max' | 'avg' | 'last';
+  /** Present for formula metrics: weighted terms over other metrics. */
+  formula?: Array<{ metricId: string; weight: number }>;
+  order: number;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** An admin-defined achievement rule: a metric threshold within a scope. */
+export interface AchievementRuleDoc {
+  _id: string;
+  name: string;
+  description: string;
+  tier: 'bronze' | 'silver' | 'gold' | 'plasma';
+  icon: string;
+  metricId: string;
+  scope: 'all-time' | 'monthly' | 'daily' | 'game';
+  threshold: number;
+  order: number;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ContentDoc {
@@ -140,8 +228,16 @@ export class MongoService implements OnModuleDestroy {
     return (await this.db()).collection<UserDoc>('users');
   }
 
-  async wins(): Promise<Collection<WinDoc>> {
-    return (await this.db()).collection<WinDoc>('wins');
+  async games(): Promise<Collection<GameDoc>> {
+    return (await this.db()).collection<GameDoc>('games');
+  }
+
+  async metrics(): Promise<Collection<MetricDoc>> {
+    return (await this.db()).collection<MetricDoc>('metrics');
+  }
+
+  async achievementRules(): Promise<Collection<AchievementRuleDoc>> {
+    return (await this.db()).collection<AchievementRuleDoc>('achievementRules');
   }
 
   async content(): Promise<Collection<ContentDoc>> {
@@ -158,21 +254,48 @@ export class MongoService implements OnModuleDestroy {
     if (this.indexesEnsured) return;
     this.indexesEnsured = true;
 
-    const winIndexes: IndexDescription[] = [
-      // Profile page: this racer's wins, newest first.
-      { key: { userId: 1, at: -1 }, name: 'userId_at' },
+    const gameIndexes: IndexDescription[] = [
+      // Profile page and the global daily timeline: newest first.
+      { key: { at: -1 }, name: 'at' },
       // Daily and monthly boards group on these.
       { key: { dayKey: 1 }, name: 'dayKey' },
       { key: { monthKey: 1 }, name: 'monthKey' },
-      // Streaks read (userId, dayKey) pairs without touching the documents.
-      { key: { userId: 1, dayKey: 1 }, name: 'userId_dayKey' },
+      // Per-racer scans (profile, streaks) match on a result's racerId.
+      { key: { 'results.racerId': 1, at: -1 }, name: 'resultsRacerId_at' },
     ];
 
     try {
-      await db.collection('wins').createIndexes(winIndexes);
-      await db
-        .collection('users')
-        .createIndexes([{ key: { email: 1 }, name: 'email', unique: true }]);
+      await db.collection('games').createIndexes(gameIndexes);
+      // Metric and rule ordering.
+      await db.collection('metrics').createIndexes([{ key: { order: 1 }, name: 'order' }]);
+      await db.collection('achievementRules').createIndexes([{ key: { order: 1 }, name: 'order' }]);
+      /*
+       * Pre-encryption installs had unique indexes directly on plaintext
+       * `email`/`googleId`. Those fields no longer exist on a document once
+       * it's migrated (see migrate-encrypt-users.ts), and a *non-sparse*
+       * unique index treats every document missing the field as colliding on
+       * `null` — so the old index must go before it can break the second
+       * migrated write. Dropping is safe to attempt on every boot: it's a
+       * no-op once the index is already gone, which is the common case.
+       */
+      for (const legacyIndex of ['email', 'googleId']) {
+        try {
+          await db.collection('users').dropIndex(legacyIndex);
+        } catch {
+          // Already gone, or a fresh install that never had it. Either way, fine.
+        }
+      }
+
+      await db.collection('users').createIndexes([
+        // One seat per address — this is what makes claim-by-email safe.
+        { key: { emailHash: 1 }, name: 'emailHash', unique: true },
+        /*
+         * Sparse, so the many unclaimed racers (no googleId at all) don't
+         * collide with each other on a missing value. Unique, so one Google
+         * account can never end up attached to two seats.
+         */
+        { key: { googleIdHash: 1 }, name: 'googleIdHash', unique: true, sparse: true },
+      ]);
     } catch (error) {
       // A read-only user or a race with another instance shouldn't take the
       // app down — the queries still work, just less efficiently.

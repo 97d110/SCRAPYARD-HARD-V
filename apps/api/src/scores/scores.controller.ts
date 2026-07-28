@@ -1,14 +1,63 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
-import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { BadRequestException, Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsInt,
+  IsObject,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+  MinLength,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
 import { CurrentUser, JwtAuthGuard } from '../auth/guards';
 import { ScoresService } from './scores.service';
-import type { PeriodKind, PublicUser, Scoreboard } from '@scrapyard/shared';
+import type { PeriodKind, PublicUser, RecordGameResponse, Scoreboard } from '@scrapyard/shared';
 import { dayKey, monthKey, periodKindOf } from '../common/period.util';
-import { BadRequestException } from '@nestjs/common';
 
-export class AwardWinDto {
+export class GameResultDto {
   @IsString() @MinLength(1) @MaxLength(128)
-  winnerId!: string;
+  racerId!: string;
+
+  @IsInt() @Min(1) @Max(4)
+  place!: number;
+
+  /** Optional — a winner-only entry can skip it; defaults to 0 server-side. */
+  @IsOptional() @IsInt() @Min(0) @Max(999)
+  gameScore?: number;
+
+  /** Captured metric values, keyed by metric id. Sanitised server-side. */
+  @IsOptional() @IsObject()
+  stats?: Record<string, number>;
+}
+
+export class KillEventDto {
+  @IsString() @MinLength(1) @MaxLength(128)
+  killerId!: string;
+
+  @IsString() @MinLength(1) @MaxLength(128)
+  victimId!: string;
+}
+
+export class RecordGameDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(4)
+  @ValidateNested({ each: true })
+  @Type(() => GameResultDto)
+  results!: GameResultDto[];
+
+  /** The kill log — killer→victim pairs. Revenge is resolved server-side. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(60)
+  @ValidateNested({ each: true })
+  @Type(() => KillEventDto)
+  events?: KillEventDto[];
 
   @IsOptional() @IsString() @MaxLength(140)
   note?: string;
@@ -34,11 +83,7 @@ export class ScoresController {
     return { ...boards, periods: { month: monthKey(), day: dayKey() } };
   }
 
-  /**
-   * Every period that has at least one win, for the archive picker.
-   *
-   * Cheap now: two `distinct` calls rather than reading 40+ derived files.
-   */
+  /** Every period that has at least one game, for the archive picker. */
   @Get('boards')
   async boards(): Promise<Array<{ kind: PeriodKind; key: string }>> {
     return this.scores.listPeriods();
@@ -55,24 +100,25 @@ export class ScoresController {
   }
 
   /**
-   * Add Score. One award = one point, recorded as a single immutable `wins`
-   * document — an atomic insert with no lock and no cascade. The boards in the
-   * response are aggregated fresh.
+   * Record a race: 2–4 finishers with their place, in-game score and stats,
+   * written as a single immutable `games` document. The boards in the response
+   * are aggregated fresh.
    */
-  @Post('award')
-  async award(
-    @Body() dto: AwardWinDto,
+  @Post('record')
+  async record(
+    @Body() dto: RecordGameDto,
     @CurrentUser() actor: PublicUser,
-  ): Promise<{
-    win: { id: string; at: string };
-    winner: { id: string; displayName: string; avatarUrl: string; accentColor: string; allTime: number };
-    boards: { allTime: Scoreboard; monthly: Scoreboard; daily: Scoreboard };
-  }> {
-    const result = await this.scores.awardWin(dto.winnerId, actor.id, dto.note);
+  ): Promise<RecordGameResponse> {
+    const result = await this.scores.recordGame({
+      results: dto.results,
+      events: dto.events,
+      awardedBy: actor.id,
+      note: dto.note,
+    });
     const { allTime, monthly, daily } = result.boards;
 
     return {
-      win: { id: result.win.id, at: result.win.at },
+      game: { id: result.game.id, at: result.game.at },
       winner: {
         id: result.winner.id,
         displayName: result.winner.displayName,
@@ -83,5 +129,4 @@ export class ScoresController {
       boards: { allTime, monthly, daily },
     };
   }
-
 }

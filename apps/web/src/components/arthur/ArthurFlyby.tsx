@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArthurShip } from './ArthurShip';
+import { ArthurLottie } from './ArthurLottie';
 
 /**
  * The celebration: after a score is submitted, Arthur tears across the whole
@@ -126,7 +126,7 @@ export function ArthurFlyby({
             />
           ))}
 
-          <ArthurShip size={168} thrust accent={accent} />
+          <ArthurLottie size={168} thrust accent={accent} />
         </div>
       </div>
 

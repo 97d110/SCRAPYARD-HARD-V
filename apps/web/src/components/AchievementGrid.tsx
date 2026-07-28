@@ -1,15 +1,23 @@
 import {
+  Activity,
+  Award,
+  Beer,
   Boxes,
   CalendarCheck,
+  Crosshair,
   Crown,
+  Flag,
   Flame,
   Gauge,
   Globe,
   Infinity as InfinityIcon,
+  ListOrdered,
   Lock,
   Medal,
   Moon,
   Rocket,
+  Skull,
+  SlidersHorizontal,
   Swords,
   Target,
   Trophy,
@@ -41,6 +49,16 @@ const ICONS: Record<string, LucideIcon> = {
   moon: Moon,
   undo: Undo2,
   globe: Globe,
+  // Keys used by the new metrics, rules and specials. Anything still unmatched
+  // falls back to the trophy below.
+  beer: Beer,
+  crosshair: Crosshair,
+  skull: Skull,
+  flag: Flag,
+  activity: Activity,
+  award: Award,
+  'sliders-horizontal': SlidersHorizontal,
+  'list-ordered': ListOrdered,
 };
 
 const TIER_COLOR: Record<AchievementTier, string> = {

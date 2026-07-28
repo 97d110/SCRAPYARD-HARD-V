@@ -2,17 +2,17 @@
   "name": "scrapyard",
   "version": "1.0.0",
   "private": true,
-  "description": "Scrapyard \u2014 a BlazeRush-themed neon leaderboard for the crew.",
+  "description": "Scrapyard — a BlazeRush-themed neon leaderboard for the crew.",
   "engines": {
     "node": ">=20 <23"
   },
   "//": [
-    "ONE manifest for the whole repo \u2014 no workspaces. apps/* and packages/* are",
+    "ONE manifest for the whole repo — no workspaces. apps/* and packages/* are",
     "plain folders with their own tsconfig, joined by the `paths` mapping in",
     "tsconfig.base.json.",
     "",
     "dependencies    = required at runtime by `node apps/api/dist/main.js`.",
-    "devDependencies = everything else, including react and vite \u2014 Vite bundles",
+    "devDependencies = everything else, including react and vite — Vite bundles",
     "                  them into the client asset at build time and Node never",
     "                  requires them. Render runs `npm ci` then prunes with this.",
     "",
@@ -32,7 +32,9 @@
     "typecheck:api": "tsc -p apps/api/tsconfig.json --noEmit",
     "typecheck:web": "tsc -p apps/web/tsconfig.app.json --noEmit",
     "seed": "ts-node -P apps/api/tsconfig.json apps/api/src/database/seed.ts",
-    "smoke": "ts-node -P apps/api/tsconfig.json apps/api/src/database/smoke.ts"
+    "migrate:encrypt-users": "ts-node -P apps/api/tsconfig.json apps/api/src/database/migrate-encrypt-users.ts",
+    "smoke": "ts-node -P apps/api/tsconfig.json apps/api/src/database/smoke.ts",
+    "preflight": "ts-node -P apps/api/tsconfig.json apps/api/src/diagnostics/preflight.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.6",
@@ -64,6 +66,7 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
     "autoprefixer": "^10.4.20",
+    "lottie-web": "^5.13.0",
     "lucide-react": "^0.460.0",
     "npm-run-all": "^4.1.5",
     "postcss": "^8.4.49",

@@ -369,3 +369,112 @@
     animation: none;
   }
 }
+
+/* ── Desktop typography ──────────────────────────────────────────────────────
+ * On wide screens the giant page titles read a couple steps smaller, and the
+ * common body copy a couple steps larger (via a nudged root rem, which every
+ * rem-based size follows). Left unlayered on purpose: it must win over
+ * Tailwind's text-* utilities that some headings carry.
+ */
+@media (min-width: 1024px) {
+  html {
+    font-size: 17.5px;
+  }
+  .headline {
+    font-size: clamp(1.5rem, 0.8rem + 1.6vw, 2.75rem);
+  }
+}
+
+/* ── Overlay open / close ────────────────────────────────────────────────────
+ * The Add Score screen expands into place — scaling up from a touch small with
+ * a quick de-blur — and collapses back the same way on close. Origin is the
+ * launch button-ish top, so it reads as "unfolding" rather than a plain fade.
+ */
+@keyframes overlay-expand {
+  from {
+    opacity: 0;
+    transform: scale(0.9) translateY(18px);
+    filter: blur(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    filter: blur(0);
+  }
+}
+@keyframes overlay-collapse {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    filter: blur(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.94) translateY(14px);
+    filter: blur(6px);
+  }
+}
+@keyframes overlay-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes overlay-backdrop-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* ── Call-to-action nudge ────────────────────────────────────────────────────
+ * A small "look, I'm here" pulse on the Record Race button — a brief lift +
+ * brighten roughly once every 1.5s, resting flat the rest of the cycle so it
+ * reads as an occasional nudge, not constant motion. Pauses on hover/press so
+ * it never fights the button's own interaction states. (The global
+ * reduced-motion rule disables it for anyone who's asked for less movement.)
+ */
+@keyframes cta-nudge {
+  0%, 60%, 90%, 100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  70% {
+    transform: translateY(-2px) scale(1.045);
+    filter: brightness(1.22);
+  }
+  80% {
+    transform: translateY(0) scale(0.99);
+    filter: brightness(1.08);
+  }
+}
+.cta-nudge {
+  animation: cta-nudge 1500ms ease-in-out infinite;
+}
+.cta-nudge:hover,
+.cta-nudge:active,
+.cta-nudge:disabled {
+  animation: none;
+}
+
+/* ── Hero ship halo + ambient sparks ─────────────────────────────────────────
+ * The hero spaceship idles with a slow breathing glow behind it. Separately,
+ * each spark spends nearly its whole cycle invisible at scale(0) and only
+ * flares in the last slice of it — shooting out to (--dx, --dy) and fading —
+ * so with nine sparks on staggered durations/delays the bursts read as
+ * occasional flickers of light escaping from behind the hull, never a
+ * constant sparkler. (The global reduced-motion rule above already collapses
+ * both to a single frame for anyone who's asked for less movement.)
+ */
+@keyframes hero-halo-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.92); }
+  50% { opacity: 0.7; transform: scale(1.08); }
+}
+.hero-ship-halo {
+  animation: hero-halo-pulse 3.6s ease-in-out infinite;
+}
+
+@keyframes hero-spark-burst {
+  0%, 68% { transform: translate(0, 0) scale(0); opacity: 0; }
+  73% { transform: translate(0, 0) scale(1); opacity: 1; }
+  100% { transform: translate(var(--dx, 40px), var(--dy, -40px)) scale(0); opacity: 0; }
+}
+.hero-spark {
+  animation: hero-spark-burst var(--dur, 5.5s) ease-out infinite;
+}

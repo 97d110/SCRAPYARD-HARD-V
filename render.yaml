@@ -49,6 +49,16 @@ services:
       - key: JWT_SECRET
         generateValue: true
 
+      # --- Data protection ---------------------------------------------------
+      # Encrypts email/googleId at rest. Deliberately sync: false rather than
+      # generateValue: true like JWT_SECRET above — losing or rotating THIS
+      # one doesn't just log people out, it makes existing racers' email and
+      # Google id permanently undecryptable, which breaks login for them.
+      # Generate it yourself and keep a copy somewhere durable:
+      #   openssl rand -base64 32
+      - key: DATA_ENCRYPTION_KEY
+        sync: false
+
       # --- Database (you supply) -------------------------------------------
       - key: MONGODB_URI
         sync: false

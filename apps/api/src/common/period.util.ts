@@ -13,6 +13,7 @@ import type { PeriodKind } from '@scrapyard/shared';
 let cachedZone: string | null = null;
 let cachedDayFormatter: Intl.DateTimeFormat | null = null;
 let cachedHourFormatter: Intl.DateTimeFormat | null = null;
+let cachedMinuteFormatter: Intl.DateTimeFormat | null = null;
 
 function timezone(): string {
   if (cachedZone === null) {
@@ -44,11 +45,24 @@ function hourFormatter(): Intl.DateTimeFormat {
   return cachedHourFormatter;
 }
 
+function minuteFormatter(): Intl.DateTimeFormat {
+  if (!cachedMinuteFormatter) {
+    cachedMinuteFormatter = new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone(),
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+  }
+  return cachedMinuteFormatter;
+}
+
 /** Test/boot hook — forget the cached zone so the next call re-reads env. */
 export function resetTimezoneCache(): void {
   cachedZone = null;
   cachedDayFormatter = null;
   cachedHourFormatter = null;
+  cachedMinuteFormatter = null;
 }
 
 /** 'YYYY-MM-DD' in the configured timezone. */
@@ -68,6 +82,16 @@ export function monthKey(date: Date = new Date()): string {
  */
 export function hourOfDay(date: Date): number {
   return Number.parseInt(hourFormatter().format(date), 10);
+}
+
+/**
+ * Minutes since midnight (0–1439) in the configured timezone. Used by the
+ * Happy Hour achievement, whose window (16:30–19:00) needs minute precision.
+ */
+export function minuteOfDay(date: Date): number {
+  // en-GB 24h formats as 'HH:mm'.
+  const [hh, mm] = minuteFormatter().format(date).split(':');
+  return Number.parseInt(hh, 10) * 60 + Number.parseInt(mm, 10);
 }
 
 export function isDayKey(value: string): boolean {

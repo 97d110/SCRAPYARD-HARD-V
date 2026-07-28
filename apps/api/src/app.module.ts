@@ -6,6 +6,7 @@ import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { ScoresModule } from './scores/scores.module';
 import { ContentModule } from './content/content.module';
+import { ConfigEditorModule } from './config/config-editor.module';
 import { WebModule } from './web/web.module';
 import { dayKey, monthKey, timezoneName } from './common/period.util';
 
@@ -53,6 +54,7 @@ class MetaController {
     UsersModule,
     ScoresModule,
     ContentModule,
+    ConfigEditorModule,
     WebModule,
   ],
   controllers: [MetaController],

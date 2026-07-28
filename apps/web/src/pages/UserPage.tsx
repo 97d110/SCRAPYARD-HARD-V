@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { Calendar, Flame, Medal, Pencil, RotateCcw, Save, Upload, X } from 'lucide-react';
+import { Link, useParams } from 'react-router-dom';
+import { Calendar, Crosshair, Flame, Pencil, RotateCcw, Save, Skull, Swords, Upload, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { useApp } from '../state/AppStore';
 import { AchievementGrid } from '../components/AchievementGrid';
-import { ArthurShip } from '../components/arthur/ArthurShip';
+import { ArthurLottie } from '../components/arthur/ArthurLottie';
+import { RacerBadge } from '../components/RacerBadge';
 import {
   Avatar,
   ErrorPlate,
@@ -14,7 +15,7 @@ import {
   Panel,
   Stat,
 } from '../components/ui/primitives';
-import type { ProfileBundle, PublicUser } from '@scrapyard/shared';
+import type { GameParticipation, ProfileBundle, PublicUser, Rival } from '@scrapyard/shared';
 
 /**
  * Racer profile. Public for everyone (achievements included); the edit panel
@@ -22,7 +23,7 @@ import type { ProfileBundle, PublicUser } from '@scrapyard/shared';
  */
 export function UserPage() {
   const { id = '' } = useParams();
-  const { me, patchMe } = useApp();
+  const { me, patchMe, userById } = useApp();
   const [bundle, setBundle] = useState<ProfileBundle | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -47,8 +48,24 @@ export function UserPage() {
   if (error) return <ErrorPlate message={error} onRetry={() => void load()} />;
   if (!bundle) return <LoadingRig label="Pulling telemetry" />;
 
-  const { user, streaks, ranks, achievements, recentWins, activity } = bundle;
+  const { user, streaks, ranks, achievements, totals, columns, recentGames, rivals, activity } = bundle;
   const accent = user.accentColor;
+  // Resolve a racer id to the fields RacerBadge needs (avatar + name + accent).
+  const racerRef = (racerId: string) => {
+    const other = userById(racerId);
+    return {
+      id: racerId,
+      name: other?.displayName ?? 'a rival',
+      avatarUrl: other?.avatarUrl ?? '',
+      accentColor: other?.accentColor ?? '#7C5CFF',
+    };
+  };
+
+  // Captured/formula columns are the interesting per-race stats — points and
+  // placement are already spelled out, so these are what earns a chip on a game.
+  const statColumns = columns.filter(
+    (column) => column.kind === 'captured' || column.kind === 'formula',
+  );
 
   return (
     <div className="space-y-8">
@@ -57,7 +74,7 @@ export function UserPage() {
         {/* Idling Arthur in the corner, tinted to the racer's accent. */}
         <div className="pointer-events-none absolute -right-6 -top-4 hidden opacity-25 sm:block">
           <div className="animate-hover">
-            <ArthurShip size={200} accent={accent} />
+            <ArthurLottie size={200} accent={accent} />
           </div>
         </div>
 
@@ -170,45 +187,268 @@ export function UserPage() {
         </Panel>
       </div>
 
+      {/* Career totals — every metric's all-time total, labelled from columns. */}
+      {columns.length > 0 && (
+        <div>
+          <h2 className="headline-cold mb-3 font-display text-lg font-black uppercase sm:text-xl">
+            Career totals
+          </h2>
+          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 3xl:grid-cols-7">
+            {columns.map((column) => (
+              <div
+                key={column.id}
+                className="border border-hairline bg-white/[0.015] px-3 py-3"
+                style={{ ['--glow' as string]: accent }}
+              >
+                <p className="label truncate !text-[0.5rem]">{column.label}</p>
+                <p
+                  className="stat-number mt-1 text-xl leading-none text-white"
+                  style={{ textShadow: `0 0 16px ${accent}` }}
+                >
+                  {formatMetricValue(totals[column.id] ?? 0)}
+                </p>
+                {column.unit && (
+                  <p className="mt-0.5 truncate text-[0.55rem] text-[var(--text-faint)]">
+                    {column.unit}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* 90-day activity strip. */}
       <ActivityStrip activity={activity} accent={accent} />
+
+      {/* Rivalries — who's been hunting this racer, and their revenge. */}
+      {rivals.length > 0 && <NemesisPanel rivals={rivals} accent={accent} />}
 
       {/* Achievements — visible to everyone. */}
       <AchievementGrid achievements={achievements} />
 
-      {/* Recent wins log. */}
-      {recentWins.length > 0 && (
+      {/* Recent races log. */}
+      {recentGames.length > 0 && (
         <div>
           <h2 className="headline-cold mb-3 font-display text-lg font-black uppercase sm:text-xl">
-            Recent wins
+            Recent races
           </h2>
           <Panel accent={accent} className="divide-y divide-hairline/60 overflow-hidden">
-            {recentWins.slice(0, 12).map((win) => (
-              <div key={win.id} className="flex items-center gap-3 px-4 py-2.5 sm:px-5">
-                <Medal size={15} className="shrink-0" style={{ color: accent }} />
-                <span className="font-mono text-[0.7rem] text-[var(--text-dim)]">
-                  {new Date(win.at).toLocaleString(undefined, {
-                    month: 'short',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
-                </span>
-                {win.note && (
-                  <span className="min-w-0 truncate text-xs italic text-[var(--text-faint)]">
-                    {win.note}
+            {recentGames.slice(0, 12).map((game) => {
+              const podium = game.place <= 3;
+              const chips = statColumns
+                .filter((column) => (game.metrics[column.id] ?? 0) !== 0)
+                .slice(0, 4);
+              return (
+                <div
+                  key={game.gameId}
+                  className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 sm:px-5"
+                >
+                  {/* Placement badge — the headline of the row. */}
+                  <span
+                    className="grid h-7 min-w-[3.4rem] shrink-0 place-items-center px-2 font-display text-[0.62rem] font-black uppercase tracking-wide"
+                    style={{
+                      color: podium ? '#000' : 'var(--text-dim)',
+                      background: podium ? accent : 'rgb(255 255 255 / 0.04)',
+                      boxShadow: podium ? `0 0 14px ${accent}` : 'none',
+                      borderRadius: 3,
+                    }}
+                    title={`Finished ${game.place} of ${game.fieldSize}`}
+                  >
+                    P{game.place} of {game.fieldSize}
                   </span>
-                )}
-                <span className="ml-auto shrink-0 font-display text-[0.6rem] uppercase tracking-widest text-[var(--text-faint)]">
-                  +1
-                </span>
-              </div>
-            ))}
+
+                  <span className="font-mono text-[0.7rem] text-[var(--text-dim)]">
+                    {new Date(game.at).toLocaleString(undefined, {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </span>
+
+                  {/* A few key per-race stats. */}
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    <StatChip label="score" value={formatMetricValue(game.gameScore)} accent={accent} />
+                    {chips.map((column) => (
+                      <StatChip
+                        key={column.id}
+                        label={column.label.toLowerCase()}
+                        value={formatMetricValue(game.metrics[column.id] ?? 0)}
+                        accent={accent}
+                      />
+                    ))}
+                  </span>
+
+                  {game.note && (
+                    <span className="min-w-0 truncate text-xs italic text-[var(--text-faint)]">
+                      {game.note}
+                    </span>
+                  )}
+
+                  {/* This racer's kills and deaths in the race, revenge tagged. */}
+                  {game.events.length > 0 && (
+                    <span className="flex w-full flex-wrap items-center gap-1.5">
+                      <KillChips game={game} userId={user.id} resolve={racerRef} />
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </Panel>
         </div>
       )}
     </div>
   );
+}
+
+/**
+ * The rivalries panel. Leads with the nemesis (whoever's killed this racer
+ * most), then the rest of the head-to-heads, each showing the two-way tally
+ * and how many of the racer's kills were same-day revenge.
+ */
+function NemesisPanel({ rivals, accent }: { rivals: Rival[]; accent: string }) {
+  const nemesis = rivals.find((rival) => rival.theyKilledYou > 0);
+
+  return (
+    <div>
+      <h2 className="headline-cold mb-3 font-display text-lg font-black uppercase sm:text-xl">
+        Rivalries
+      </h2>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {rivals.map((rival) => {
+          const isNemesis = nemesis?.userId === rival.userId;
+          return (
+            <Link
+              key={rival.userId}
+              to={`/racer/${rival.userId}`}
+              title={`View ${rival.displayName}'s profile`}
+              className="block transition hover:-translate-y-0.5"
+            >
+              <Panel
+                accent={isNemesis ? '#FF3B30' : rival.accentColor}
+                lit={isNemesis}
+                className="flex items-center gap-3 p-3.5"
+              >
+              <Avatar src={rival.avatarUrl} name={rival.displayName} size={38} accent={rival.accentColor} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="truncate font-display text-[0.8rem] font-bold uppercase tracking-wide text-white">
+                    {rival.displayName}
+                  </span>
+                  {isNemesis && (
+                    <span className="shrink-0 rounded-sm px-1.5 py-0.5 text-[0.5rem] uppercase tracking-widest text-[#FF3B30]" style={{ border: '1px solid #FF3B3055' }}>
+                      nemesis
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 flex items-center gap-3 font-mono text-[0.66rem]">
+                  <span
+                    className="inline-flex items-center gap-1 text-[var(--text-dim)]"
+                    title={`You've taken ${rival.displayName} out ${rival.youKilledThem} time${rival.youKilledThem === 1 ? '' : 's'}`}
+                  >
+                    <Crosshair size={12} style={{ color: accent }} aria-hidden /> {rival.youKilledThem}
+                  </span>
+                  <span
+                    className="inline-flex items-center gap-1 text-[var(--text-dim)]"
+                    title={`${rival.displayName} has taken you out ${rival.theyKilledYou} time${rival.theyKilledYou === 1 ? '' : 's'}`}
+                  >
+                    <Skull size={12} className="text-[#FF6B6B]" aria-hidden /> {rival.theyKilledYou}
+                  </span>
+                  {rival.yourRevenges > 0 && (
+                    <span
+                      className="inline-flex items-center gap-1 text-[var(--text-dim)]"
+                      title={`${rival.yourRevenges} same-day revenge kill${rival.yourRevenges === 1 ? '' : 's'} against ${rival.displayName}`}
+                    >
+                      <Swords size={12} style={{ color: '#B6FF3C' }} aria-hidden /> {rival.yourRevenges}
+                    </span>
+                  )}
+                </div>
+              </div>
+              </Panel>
+            </Link>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Per-race kill/death chips for one game, from this racer's point of view. */
+function KillChips({
+  game,
+  userId,
+  resolve,
+}: {
+  game: GameParticipation;
+  userId: string;
+  resolve: (id: string) => { id: string; name: string; avatarUrl: string; accentColor: string };
+}) {
+  const kills = game.events.filter((event) => event.killerId === userId);
+  const deaths = game.events.filter((event) => event.victimId === userId);
+
+  return (
+    <>
+      {kills.map((event, i) => {
+        const victim = resolve(event.victimId);
+        return (
+          <span
+            key={`k${i}`}
+            className="inline-flex items-center gap-1 border border-hairline px-1.5 py-0.5 font-mono text-[0.6rem] text-[var(--text-dim)]"
+            title={
+              event.revenge
+                ? `Revenge — you took out ${victim.name} after they'd killed you earlier the same day`
+                : `You took out ${victim.name} in this race`
+            }
+          >
+            <Crosshair size={11} className="text-toxic" aria-hidden />
+            <RacerBadge {...victim} size={15} className="text-white" title={`View ${victim.name}'s profile`} />
+            {event.revenge && (
+              <span
+                className="inline-flex items-center gap-0.5 font-display font-bold uppercase tracking-wider text-[#B6FF3C]"
+                title="Revenge — a same-day payback: you took out a racer who had killed you earlier today"
+              >
+                <Swords size={10} aria-hidden /> revenge
+              </span>
+            )}
+          </span>
+        );
+      })}
+      {deaths.map((event, i) => {
+        const killer = resolve(event.killerId);
+        return (
+          <span
+            key={`d${i}`}
+            className="inline-flex items-center gap-1 border border-hairline px-1.5 py-0.5 font-mono text-[0.6rem] text-[var(--text-faint)]"
+            title={`${killer.name} took you out in this race`}
+          >
+            <Skull size={11} className="text-[#FF6B6B]" aria-hidden />
+            <span className="text-[var(--text-dim)]">by</span>
+            <RacerBadge {...killer} size={15} className="text-[var(--text-dim)]" title={`View ${killer.name}'s profile`} />
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
+/** A compact metric pill for the recent-races log. */
+function StatChip({ label, value, accent }: { label: string; value: string; accent: string }) {
+  return (
+    <span
+      className="inline-flex items-baseline gap-1 border border-hairline px-1.5 py-0.5 font-mono text-[0.6rem] text-[var(--text-dim)]"
+      style={{ boxShadow: `inset 0 0 18px -14px ${accent}` }}
+    >
+      <span className="font-display font-bold text-white">{value}</span>
+      <span className="text-[var(--text-faint)]">{label}</span>
+    </span>
+  );
+}
+
+/** Integers as-is; averaged metrics (avgPlace) to a single decimal. */
+function formatMetricValue(value: number): string {
+  if (!Number.isFinite(value)) return '0';
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
 function RankChip({

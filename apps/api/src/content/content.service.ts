@@ -175,9 +175,18 @@ export class ContentService {
     return items;
   }
 
-  /** Cards for the searchable admin grid. `documentCount` comes from the exporter. */
-  async describeTypes(documentCount: number): Promise<ContentTypeDescriptor[]> {
+  /** Cards for the searchable admin grid. Counts come from the exporter / registries. */
+  async describeTypes(
+    documentCount: number,
+    achievementCount: number,
+    metricCount: number,
+  ): Promise<ContentTypeDescriptor[]> {
     const puns = await this.readPuns();
+    const users = await this.mongo.users();
+    const [crewCount, unclaimedCount] = await Promise.all([
+      users.countDocuments(),
+      users.countDocuments({ googleId: { $exists: false } }),
+    ]);
     return [
       {
         id: 'puns',
@@ -207,13 +216,46 @@ export class ContentService {
         unit: 'documents',
       },
       {
+        id: 'crew',
+        label: 'Crew Roster',
+        description:
+          unclaimedCount > 0
+            ? `Add teammates by email so they can be scored before they sign in. ${unclaimedCount} waiting to be claimed.`
+            : 'Add teammates by email so they can be scored before they ever sign in.',
+        icon: 'user-plus',
+        keywords: [
+          'crew', 'team', 'member', 'members', 'user', 'users', 'people', 'add', 'invite',
+          'roster', 'email', 'colleague', 'teammate', 'account', 'new',
+        ],
+        editable: true,
+        itemCount: crewCount,
+        kind: 'content',
+        unit: unclaimedCount > 0 ? `${unclaimedCount} unclaimed` : 'racers',
+      },
+      {
+        id: 'metrics',
+        label: 'Metrics & Scoring',
+        description:
+          'Captured stats (kills, …) and formula scoring systems (Combat = 2·kills − deaths). Sortable columns on every board.',
+        icon: 'sliders-horizontal',
+        keywords: [
+          'metric', 'metrics', 'stat', 'stats', 'score', 'scoring', 'formula', 'kills',
+          'points', 'column', 'sort', 'system',
+        ],
+        editable: true,
+        itemCount: metricCount,
+        kind: 'content',
+        unit: 'metrics',
+      },
+      {
         id: 'achievements',
         label: 'Achievements',
-        description: 'Badge definitions and thresholds. Derived in code — read-only for now.',
+        description:
+          'Badge rules over any metric — threshold × scope (all-time, day, month, single race). Plus a few coded specials.',
         icon: 'trophy',
-        keywords: ['achievement', 'achievements', 'badge', 'badges', 'medal', 'trophy', 'streak'],
-        editable: false,
-        itemCount: 18,
+        keywords: ['achievement', 'achievements', 'badge', 'badges', 'medal', 'trophy', 'streak', 'rule', 'rules'],
+        editable: true,
+        itemCount: achievementCount,
         kind: 'content',
         unit: 'badges',
       },

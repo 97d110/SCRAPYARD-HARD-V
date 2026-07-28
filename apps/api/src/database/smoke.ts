@@ -11,12 +11,14 @@
  *   ALLOWED_WORKSPACE_DOMAINS=cytactic.com ADMIN_EMAILS=amit@cytactic.com \
  *   GOOGLE_CLIENT_ID=dummy GOOGLE_CLIENT_SECRET=dummy \
  *   GOOGLE_CALLBACK_URL=http://localhost:3000/api/auth/google/callback \
- *   JWT_SECRET=smoke npm run smoke
+ *   JWT_SECRET=smoke DATA_ENCRYPTION_KEY=$(openssl rand -base64 32) npm run smoke
  *
  * It DROPS the database it points at, so give it a scratch one — the name must
  * contain "smoke" or "test". Exits non-zero on any failed assertion.
  */
 import 'reflect-metadata';
+// Load apps/api/.env so `npm run smoke` picks up config without inlining it.
+import '../common/load-env';
 import { promises as fs, existsSync } from 'fs';
 import * as path from 'path';
 import { RequestMethod, ValidationPipe } from '@nestjs/common';
@@ -156,8 +158,10 @@ async function main(): Promise<void> {
   check('GET /users needs a session', (await call('GET', '/users')).status === 401);
   check('GET /scores needs a session', (await call('GET', '/scores')).status === 401);
   check(
-    'POST /scores/award needs a session',
-    (await call('POST', '/scores/award', { body: { winnerId: 'seed-dana' } })).status === 401,
+    'POST /scores/record needs a session',
+    (await call('POST', '/scores/record', {
+      body: { results: [{ racerId: 'seed-dana', place: 1, gameScore: 15 }, { racerId: 'seed-noam', place: 2, gameScore: 10 }] },
+    })).status === 401,
   );
   check(
     'admin routes reject a non-admin',
@@ -182,83 +186,133 @@ async function main(): Promise<void> {
   check('GET /content/puns returns seeded puns', puns.status === 200 && puns.body.length > 15, puns.body?.length);
   check('every returned pun is enabled', puns.body.every((p: any) => p.enabled === true));
 
-  // --- the award path --------------------------------------------------------
-  // Under the file store this was a five-file cascade inside a mutex. It is now
-  // one insert, and boards are aggregated fresh — so these checks verify the
-  // aggregation agrees with the raw collection, not that copies stayed in step.
-  console.log('\nawarding a win');
-  const before = await call('GET', '/scores', { token: adminToken });
-  const beforeAll = before.body.allTime.totalPoints;
-  const beforeDana =
-    before.body.allTime.entries.find((e: any) => e.userId === 'seed-dana')?.points ?? 0;
+  // --- recording a race ------------------------------------------------------
+  // One race = one immutable `games` document, boards aggregated fresh. Boards
+  // rank on wins, so the all-time total must equal the sum of every racer's
+  // first-place finishes.
+  const recordGame = (
+    results: Array<{ racerId: string; place: number; gameScore?: number; stats?: Record<string, number> }>,
+    note?: string,
+  ) => call('POST', '/scores/record', { token: adminToken, body: note ? { results, note } : { results } });
 
-  const award = await call('POST', '/scores/award', {
-    token: adminToken,
-    body: { winnerId: 'seed-dana', note: 'Volcano Loop, photo finish' },
-  });
-  check('POST /scores/award succeeds', award.status === 201, award.body);
-  check('response reports the new total', award.body?.winner?.allTime === beforeDana + 1, award.body?.winner);
+  console.log('\nrecording a race');
+  const before = await call('GET', '/scores', { token: adminToken });
+  const beforeAll = before.body.allTime.total;
+  const beforeDanaWins =
+    before.body.allTime.entries.find((e: any) => e.userId === 'seed-dana')?.metrics.wins ?? 0;
+
+  // Dana wins (place 1); Noam/Omer place but don't win — +1 to all-time wins.
+  const award = await recordGame(
+    [
+      { racerId: 'seed-dana', place: 1, gameScore: 15, stats: { kills: 4, deaths: 1 } },
+      { racerId: 'seed-noam', place: 2, gameScore: 11, stats: { kills: 2, deaths: 3 } },
+      { racerId: 'seed-omer', place: 3, gameScore: 6, stats: { kills: 1, deaths: 4 } },
+    ],
+    'Volcano Loop, photo finish',
+  );
+  check('POST /scores/record succeeds', award.status === 201, award.body);
+  check('response returns the new game id', typeof award.body?.game?.id === 'string', award.body?.game);
+  check('response reports the winner’s new all-time wins', award.body?.winner?.allTime === beforeDanaWins + 1, award.body?.winner);
   check(
     'response carries all three fresh boards',
     Boolean(award.body?.boards?.allTime && award.body?.boards?.monthly && award.body?.boards?.daily),
   );
 
   const after = await call('GET', '/scores', { token: adminToken });
-  check('all-time total incremented', after.body.allTime.totalPoints === beforeAll + 1);
+  check('all-time wins incremented by the new win', after.body.allTime.total === beforeAll + 1, {
+    before: beforeAll,
+    after: after.body.allTime.total,
+  });
   check(
     'monthly board reflects the win',
-    after.body.monthly.entries.find((e: any) => e.userId === 'seed-dana').points >= 1,
+    after.body.monthly.entries.find((e: any) => e.userId === 'seed-dana').metrics.wins >= 1,
   );
   check(
     'daily board reflects the win',
-    after.body.daily.entries.find((e: any) => e.userId === 'seed-dana').points >= 1,
+    after.body.daily.entries.find((e: any) => e.userId === 'seed-dana').metrics.wins >= 1,
   );
+  check(
+    'boards carry the captured metric columns',
+    after.body.allTime.columns.some((c: any) => c.id === 'kills') &&
+      after.body.allTime.columns.some((c: any) => c.id === 'combat'),
+  );
+  check(
+    'combat formula computes 2·kills − deaths',
+    after.body.allTime.entries.find((e: any) => e.userId === 'seed-dana').metrics.combat ===
+      2 * after.body.allTime.entries.find((e: any) => e.userId === 'seed-dana').metrics.kills -
+        after.body.allTime.entries.find((e: any) => e.userId === 'seed-dana').metrics.deaths,
+  );
+
+  // A winner alone is a valid race — everything past first place is optional.
+  const winnerOnly = await recordGame([{ racerId: 'seed-tamar', place: 1 }]);
+  check('a winner-only race records (score optional)', winnerOnly.status === 201, winnerOnly.body);
 
   // The aggregation must agree with the raw collection.
   const verify = new MongoClient(uri);
   await verify.connect();
   const db = verify.db(dbName);
-  const rawWins = await db.collection('wins').countDocuments();
-  check('board total equals the wins collection count', after.body.allTime.totalPoints === rawWins, {
-    board: after.body.allTime.totalPoints,
-    collection: rawWins,
+  const rawGames = await db.collection('games').countDocuments();
+  const boardTotal = (b: any) => b.entries.reduce((s: number, e: any) => s + e.primary, 0);
+  check('all-time total equals the sum of finisher wins', after.body.allTime.total === boardTotal(after.body.allTime), {
+    total: after.body.allTime.total,
+    summed: boardTotal(after.body.allTime),
   });
   check(
-    'the win was stored with its note',
-    (await db.collection('wins').countDocuments({ note: 'Volcano Loop, photo finish' })) === 1,
+    'the race was stored with its note',
+    (await db.collection('games').countDocuments({ note: 'Volcano Loop, photo finish' })) === 1,
   );
   check(
-    'the win records who awarded it',
-    (await db.collection('wins').countDocuments({ awardedBy: 'seed-amit' })) > 0,
+    'the race records who entered it',
+    (await db.collection('games').countDocuments({ awardedBy: 'seed-amit' })) > 0,
   );
   check(
     'there is no scoreboard collection to drift',
     !(await db.listCollections({ name: 'scores' }).hasNext()),
   );
 
-  const points = after.body.allTime.entries
-    .filter((e: any) => e.points > 0)
-    .map((e: any) => e.points);
-  check('board is sorted descending', points.every((p: number, i: number) => i === 0 || points[i - 1] >= p));
+  const primaries = after.body.allTime.entries
+    .filter((e: any) => e.primary > 0)
+    .map((e: any) => e.primary);
+  check('board is sorted descending by wins', primaries.every((p: number, i: number) => i === 0 || primaries[i - 1] >= p));
+  check('rank 1 exists', after.body.allTime.entries[0].rank === 1);
+
+  // --- rejects a malformed race ----------------------------------------------
+  check('rejects a race with zero finishers', (await recordGame([])).status === 400);
   check(
-    'rank 1 exists and is untied',
-    after.body.allTime.entries[0].rank === 1 && after.body.allTime.entries[0].tied === false,
+    'rejects gap/tie in places',
+    (await recordGame([
+      { racerId: 'seed-dana', place: 1, gameScore: 15 },
+      { racerId: 'seed-noam', place: 3, gameScore: 8 },
+    ])).status === 400,
+  );
+  check(
+    'rejects the same racer twice',
+    (await recordGame([
+      { racerId: 'seed-dana', place: 1, gameScore: 15 },
+      { racerId: 'seed-dana', place: 2, gameScore: 8 },
+    ])).status === 400,
   );
 
   // --- profile & achievements ------------------------------------------------
   console.log('\nprofile & achievements');
   const profile = await call('GET', '/users/seed-amit', { token: racerToken });
   check('anyone can view another racer profile', profile.status === 200);
-  check('profile returns achievements', profile.body.achievements.length === 18, profile.body.achievements?.length);
+  check('profile returns achievements (specials + rules)', profile.body.achievements.length === 24, profile.body.achievements?.length);
+  check('profile carries metric totals', typeof profile.body.totals.gameScore === 'number' && typeof profile.body.totals.wins === 'number');
+  check('profile carries metric columns', profile.body.columns.some((c: any) => c.id === 'gameScore'));
   check('seeded 6-day streak detected', profile.body.streaks.currentWinStreak >= 6, profile.body.streaks);
-  check('Ignition unlocked', profile.body.achievements.find((a: any) => a.id === 'first_blood').unlocked === true);
-  check('Blaze Legend still locked', profile.body.achievements.find((a: any) => a.id === 'wins_100').unlocked === false);
+  check('Ignition (rule) unlocked', profile.body.achievements.find((a: any) => a.id === 'seed-first_blood').unlocked === true);
+  check('No Brakes — 5 in a day (rule) unlocked', profile.body.achievements.find((a: any) => a.id === 'seed-day_five').unlocked === true);
+  check('Blaze Legend (rule) still locked', profile.body.achievements.find((a: any) => a.id === 'seed-wins_100').unlocked === false);
+  check('Happy Hour (special) unlocked', profile.body.achievements.find((a: any) => a.id === 'happy_hour').unlocked === true);
+  check('Back-to-Back (special) unlocked', profile.body.achievements.find((a: any) => a.id === 'back_to_back').unlocked === true);
   check('activity window is 90 days', Object.keys(profile.body.activity).length === 90);
   check('daily-lead streak computed', typeof profile.body.streaks.currentDailyLeadStreak === 'number');
   check(
-    'recent wins returned newest-first',
-    profile.body.recentWins.length > 1 && profile.body.recentWins[0].at >= profile.body.recentWins[1].at,
+    'recent games returned newest-first',
+    profile.body.recentGames.length > 1 && profile.body.recentGames[0].at >= profile.body.recentGames[1].at,
   );
+  check('recent game carries a place and metrics', profile.body.recentGames[0].place >= 1 && typeof profile.body.recentGames[0].metrics.gameScore === 'number');
   check('404 for an unknown racer', (await call('GET', '/users/nope', { token: racerToken })).status === 404);
 
   // --- profile editing -------------------------------------------------------
@@ -360,7 +414,7 @@ async function main(): Promise<void> {
   check('all-time board fetchable by key', (await call('GET', '/scores/board/all-time', { token: racerToken })).status === 200);
   check('malformed period rejected', (await call('GET', '/scores/board/last-tuesday', { token: racerToken })).status === 400);
   const future = await call('GET', '/scores/board/2099-01-01', { token: racerToken });
-  check('unseen period returns an empty board, not a 404', future.status === 200 && future.body.totalPoints === 0);
+  check('unseen period returns an empty board, not a 404', future.status === 200 && future.body.total === 0);
   const periods = await call('GET', '/scores/boards', { token: racerToken });
   check('period list includes all-time', periods.body.some((p: any) => p.key === 'all-time'));
   check('period list includes today', periods.body.some((p: any) => p.key === dayKey()));
@@ -368,8 +422,10 @@ async function main(): Promise<void> {
   // --- admin content ---------------------------------------------------------
   console.log('\nadmin content');
   const types = await call('GET', '/admin/content/types', { token: adminToken });
-  check('admin sees the content grid', types.status === 200 && types.body.length === 5, types.body?.length);
+  check('admin sees the content grid', types.status === 200 && types.body.length === 7, types.body?.length);
   check('export card is an action', types.body.find((t: any) => t.id === 'export').kind === 'action');
+  check('metrics card is editable', types.body.find((t: any) => t.id === 'metrics')?.editable === true);
+  check('achievements card is editable', types.body.find((t: any) => t.id === 'achievements')?.editable === true);
 
   const created = await call('POST', '/admin/content/puns', {
     token: adminToken,
@@ -399,12 +455,49 @@ async function main(): Promise<void> {
   check('admin can delete a pun', (await call('DELETE', `/admin/content/puns/${created.body.id}`, { token: adminToken })).status === 204);
   check('deleting twice is a 404', (await call('DELETE', `/admin/content/puns/${created.body.id}`, { token: adminToken })).status === 404);
 
+  // --- metrics & scoring engine ----------------------------------------------
+  console.log('\nmetrics & scoring engine');
+  const metricList = await call('GET', '/metrics', { token: racerToken });
+  check('racers can read the enabled metric list', metricList.status === 200 && metricList.body.some((m: any) => m.id === 'points'));
+  check('built-in points metric is present and non-editable', metricList.body.find((m: any) => m.id === 'points')?.builtin === true);
+  check('seeded captured metric kills present', metricList.body.some((m: any) => m.id === 'kills' && m.kind === 'captured'));
+
+  const adminMetrics = await call('GET', '/admin/metrics', { token: adminToken });
+  check('admin sees every metric', adminMetrics.status === 200 && adminMetrics.body.some((m: any) => m.id === 'combat'));
+  check('non-admin cannot list admin metrics', (await call('GET', '/admin/metrics', { token: racerToken })).status === 403);
+
+  const newMetric = await call('POST', '/admin/metrics', {
+    token: adminToken,
+    body: { id: 'boosts', label: 'Boosts', kind: 'captured', aggregation: 'sum', unit: 'boosts', icon: 'zap' },
+  });
+  check('admin can create a captured metric', newMetric.status === 201 && newMetric.body.id === 'boosts');
+  check('cannot reuse a built-in id', (await call('POST', '/admin/metrics', { token: adminToken, body: { id: 'points', label: 'X', kind: 'captured' } })).status === 400);
+  check('cannot edit a built-in metric', (await call('PATCH', '/admin/metrics/points', { token: adminToken, body: { label: 'Nope' } })).status === 400);
+  check(
+    'formula referencing an unknown metric is rejected',
+    (await call('POST', '/admin/metrics', { token: adminToken, body: { id: 'bad', label: 'Bad', kind: 'formula', formula: [{ metricId: 'ghost', weight: 1 }] } })).status === 400,
+  );
+  check('admin can delete a metric', (await call('DELETE', '/admin/metrics/boosts', { token: adminToken })).status === 204);
+
+  // --- achievement rules -----------------------------------------------------
+  console.log('\nachievement rules');
+  const ruleList = await call('GET', '/admin/achievement-rules', { token: adminToken });
+  check('admin sees the seeded rules', ruleList.status === 200 && ruleList.body.some((r: any) => r.id === 'seed-hat_trick'));
+  const newRule = await call('POST', '/admin/achievement-rules', {
+    token: adminToken,
+    body: { name: 'Menace', metricId: 'kills', scope: 'all-time', threshold: 3, tier: 'bronze', icon: 'crosshair' },
+  });
+  check('admin can create a rule', newRule.status === 201 && typeof newRule.body.id === 'string');
+  check('rule with unknown metric rejected', (await call('POST', '/admin/achievement-rules', { token: adminToken, body: { name: 'X', metricId: 'ghost', scope: 'all-time', threshold: 1 } })).status === 400);
+  check('new rule appears on a profile', (await call('GET', '/users/seed-amit', { token: racerToken })).body.achievements.some((a: any) => a.id === newRule.body.id));
+  check('admin can delete a rule', (await call('DELETE', `/admin/achievement-rules/${newRule.body.id}`, { token: adminToken })).status === 204);
+
   // --- export ----------------------------------------------------------------
   console.log('\ndatabase export');
   check('export needs admin', (await call('GET', '/admin/export/summary', { token: racerToken })).status === 403);
   const summary = await call('GET', '/admin/export/summary', { token: adminToken });
   check('summary counts users', summary.body.users === 9, summary.body);
-  check('summary counts wins', summary.body.wins === rawWins, summary.body);
+  check('summary counts games', summary.body.games === rawGames, summary.body);
 
   const zipResponse = await fetch(`${url}/api/admin/export/database.zip`, {
     headers: { Authorization: `Bearer ${adminToken}` },
@@ -431,9 +524,9 @@ async function main(): Promise<void> {
   } else {
     const manifest = JSON.parse(await fs.readFile(path.join(unzipDir, 'manifest.json'), 'utf8'));
     check('manifest names the exporting admin', manifest.exportedBy === 'amit@cytactic.com');
-    check('manifest counts match the collections', manifest.counts.wins === rawWins, manifest.counts);
-    const dumpedWins = JSON.parse(await fs.readFile(path.join(unzipDir, 'database/wins.json'), 'utf8'));
-    check('wins dump round-trips', Array.isArray(dumpedWins) && dumpedWins.length === rawWins);
+    check('manifest counts match the collections', manifest.counts.games === rawGames, manifest.counts);
+    const dumpedGames = JSON.parse(await fs.readFile(path.join(unzipDir, 'database/games.json'), 'utf8'));
+    check('games dump round-trips', Array.isArray(dumpedGames) && dumpedGames.length === rawGames);
     check(
       'README explains the restore',
       (await fs.readFile(path.join(unzipDir, 'README.txt'), 'utf8')).includes('mongoimport'),
@@ -443,21 +536,122 @@ async function main(): Promise<void> {
   // --- concurrency -----------------------------------------------------------
   // The old design needed a global mutex here. Inserts are atomic, so this now
   // tests MongoDB rather than our own locking — which is precisely the point.
-  console.log('\nconcurrent awards');
+  console.log('\nconcurrent race records');
   const gilBefore = (await call('GET', '/users/seed-gil', { token: adminToken })).body.user.scores.allTime;
   await Promise.all(
     Array.from({ length: 12 }, () =>
-      call('POST', '/scores/award', { token: adminToken, body: { winnerId: 'seed-gil' } }),
+      recordGame([
+        { racerId: 'seed-gil', place: 1, gameScore: 15 },
+        { racerId: 'seed-lior', place: 2, gameScore: 9 },
+      ]),
     ),
   );
   const gilAfter = (await call('GET', '/users/seed-gil', { token: adminToken })).body.user.scores.allTime;
-  check('12 parallel awards all landed (no lost writes)', gilAfter === gilBefore + 12, {
+  check('12 parallel records all landed (no lost writes)', gilAfter === gilBefore + 12, {
     expected: gilBefore + 12,
     actual: gilAfter,
   });
   const finalBoard = await call('GET', '/scores', { token: adminToken });
-  const finalRaw = await db.collection('wins').countDocuments();
-  check('board still equals the collection after concurrency', finalBoard.body.allTime.totalPoints === finalRaw);
+  const finalTotal = finalBoard.body.allTime.entries.reduce((s: number, e: any) => s + e.primary, 0);
+  check('board total stays internally consistent after concurrency', finalBoard.body.allTime.total === finalTotal);
+
+  // --- kill log & same-day revenge -------------------------------------------
+  console.log('\nkill log & same-day revenge');
+  const recordKills = (
+    results: Array<{ racerId: string; place: number; gameScore: number }>,
+    events: Array<{ killerId: string; victimId: string }>,
+  ) => call('POST', '/scores/record', { token: adminToken, body: { results, events } });
+
+  // Game A: Noam beats Dana and takes Dana out — Dana now owes Noam a grudge.
+  const killA = await recordKills(
+    [
+      { racerId: 'seed-noam', place: 1, gameScore: 15 },
+      { racerId: 'seed-dana', place: 2, gameScore: 9 },
+    ],
+    [{ killerId: 'seed-noam', victimId: 'seed-dana' }],
+  );
+  check('a race with a kill log records', killA.status === 201, killA.body);
+
+  // Game B, same day: Dana gets Noam back — that kill must be tagged revenge.
+  const killB = await recordKills(
+    [
+      { racerId: 'seed-dana', place: 1, gameScore: 15 },
+      { racerId: 'seed-noam', place: 2, gameScore: 8 },
+    ],
+    [{ killerId: 'seed-dana', victimId: 'seed-noam' }],
+  );
+  check('the payback race records', killB.status === 201, killB.body);
+
+  const danaProfile = await call('GET', '/users/seed-dana', { token: adminToken });
+  const danaVsNoam = danaProfile.body.rivals.find((r: any) => r.userId === 'seed-noam');
+  check('rivals panel tracks the head-to-head', Boolean(danaVsNoam), danaProfile.body.rivals);
+  check('same-day payback is tagged revenge', (danaVsNoam?.yourRevenges ?? 0) >= 1, danaVsNoam);
+  check('recent game carries the kill log', danaProfile.body.recentGames[0].events.length >= 1);
+  check(
+    'kills/deaths derive from the log (not typed)',
+    danaProfile.body.recentGames.some((g: any) => (g.metrics.kills ?? 0) >= 1),
+  );
+  check(
+    'rejects a self-kill',
+    (await recordKills(
+      [
+        { racerId: 'seed-dana', place: 1, gameScore: 15 },
+        { racerId: 'seed-noam', place: 2, gameScore: 8 },
+      ],
+      [{ killerId: 'seed-dana', victimId: 'seed-dana' }],
+    )).status === 400,
+  );
+  check(
+    'rejects a kill involving a non-racer',
+    (await recordKills(
+      [
+        { racerId: 'seed-dana', place: 1, gameScore: 15 },
+        { racerId: 'seed-noam', place: 2, gameScore: 8 },
+      ],
+      [{ killerId: 'seed-dana', victimId: 'seed-gil' }],
+    )).status === 400,
+  );
+
+  // --- admin create racer & claim-on-login -----------------------------------
+  // An admin adds a teammate by email; the seat is scoreable immediately and is
+  // inherited (not duplicated) when that person first signs in with Google.
+  console.log('\nadmin create racer & claim-on-login');
+  const rookieEmail = 'rookie@cytactic.com';
+  const rookie = await call('POST', '/admin/users', {
+    token: adminToken,
+    body: { email: rookieEmail, displayName: 'Rookie Racer' },
+  });
+  check('admin can create an unclaimed racer', rookie.status === 201 && rookie.body.claimed === false, rookie.body);
+  check('the new seat starts at zero wins', rookie.body.scores.allTime === 0);
+  check('non-admin cannot create a racer', (await call('POST', '/admin/users', { token: racerToken, body: { email: 'sneaky@cytactic.com', displayName: 'Sneaky' } })).status === 403);
+  check('rejects an email off the allowlist', (await call('POST', '/admin/users', { token: adminToken, body: { email: 'outsider@gmail.com', displayName: 'Nope' } })).status === 400);
+  const rookieId = rookie.body.id;
+  check('the seat shows on the roster as unclaimed', (await call('GET', '/users', { token: adminToken })).body.some((u: any) => u.id === rookieId && u.claimed === false));
+
+  // The claim: the same address signs in with Google for the first time.
+  const claim = await signIn(rookieEmail, true, 'Rookie The Real');
+  check('rookie can sign in and claim the seat', claim.ok, claim.message);
+  const claimed = await usersService.findByEmail(rookieEmail);
+  check('claim keeps the original seat id (no duplicate)', claimed?.id === rookieId, { before: rookieId, after: claimed?.id });
+  check('the seat is now claimed', Boolean(claimed?.googleId));
+  check('the admin-chosen display name survives the claim', claimed?.displayName === 'Rookie Racer', claimed?.displayName);
+
+  // Adoption: a seeded seat carries a placeholder googleId. When the real
+  // Google account signs in with the same email it must ADOPT that seat —
+  // keeping its _id — so all wins/games/stats survive rather than refusing.
+  const noamWinsBefore = (await call('GET', '/users/seed-noam', { token: adminToken })).body.user.scores.allTime;
+  const noamAdopt = await signIn('noam@cytactic.com', true, 'Noam Real');
+  check('a seeded seat is adopted by the real Google account', noamAdopt.ok, noamAdopt.message);
+  const noamAfter = await usersService.findByEmail('noam@cytactic.com');
+  check('adoption keeps the seat id (history intact)', noamAfter?.id === 'seed-noam', noamAfter?.id);
+  check('adoption re-links to the real Google id', Boolean(noamAfter?.googleId) && noamAfter?.googleId !== 'seed-noam', noamAfter?.googleId);
+  const noamWinsAfter = (await call('GET', '/users/seed-noam', { token: adminToken })).body.user.scores.allTime;
+  check('wins survive the adoption', noamWinsAfter === noamWinsBefore, { before: noamWinsBefore, after: noamWinsAfter });
+
+  // Deletion is only for an unclaimed, win-less seat — undoing a typo.
+  const spare = await call('POST', '/admin/users', { token: adminToken, body: { email: 'spare@cytactic.com', displayName: 'Spare Seat' } });
+  check('an unclaimed seat can be deleted', (await call('DELETE', `/admin/users/${spare.body.id}`, { token: adminToken })).status === 204);
+  check('a claimed racer cannot be deleted', (await call('DELETE', `/admin/users/${rookieId}`, { token: adminToken })).status === 400);
 
   // --- login page & SPA gate -------------------------------------------------
   console.log('\nlogin page & SPA gate');
@@ -494,12 +688,18 @@ async function main(): Promise<void> {
     [400, 404].includes((await call('GET', '/users/..%2F..%2Fetc%2Fpasswd', { token: racerToken })).status),
   );
   check(
-    'rejects awarding to a traversal id',
-    [400, 404].includes((await call('POST', '/scores/award', { token: adminToken, body: { winnerId: '../../etc/passwd' } })).status),
+    'rejects recording with a traversal id',
+    [400, 404].includes((await recordGame([
+      { racerId: '../../etc/passwd', place: 1, gameScore: 15 },
+      { racerId: 'seed-dana', place: 2, gameScore: 8 },
+    ])).status),
   );
   check(
-    'rejects awarding to a non-existent racer',
-    (await call('POST', '/scores/award', { token: adminToken, body: { winnerId: 'nobody' } })).status === 404,
+    'rejects recording with a non-existent racer',
+    (await recordGame([
+      { racerId: 'nobody', place: 1, gameScore: 15 },
+      { racerId: 'seed-dana', place: 2, gameScore: 8 },
+    ])).status === 404,
   );
 
   await verify.close();

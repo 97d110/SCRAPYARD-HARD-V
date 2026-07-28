@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { ApiError, api } from '../lib/api';
-import type { CurrentBoards, PublicUser, Pun } from '@scrapyard/shared';
+import type { CurrentBoards, GameResultInput, KillEventInput, PublicUser, Pun } from '@scrapyard/shared';
 
 /**
  * One store for the whole app.
@@ -34,9 +34,15 @@ interface AppState {
 interface AppActions {
   reload: () => Promise<void>;
   logout: () => Promise<void>;
-  awardWin: (winnerId: string, note?: string) => Promise<PublicUser | null>;
+  recordGame: (
+    results: GameResultInput[],
+    events?: KillEventInput[],
+    note?: string,
+  ) => Promise<PublicUser | null>;
   patchMe: (next: PublicUser) => void;
   refreshPuns: () => Promise<void>;
+  /** Re-read the roster in place, without the full-screen boot spinner. */
+  refreshUsers: () => Promise<void>;
   clearCelebration: () => void;
   userById: (id: string) => PublicUser | undefined;
 }
@@ -109,18 +115,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /**
-   * Award a win. The API returns all three freshly-derived boards, so we swap
-   * them in directly rather than refetching — then re-pull the roster so
-   * per-user totals on the Users page stay honest.
+   * Record a race. The API returns all three freshly-derived boards plus the
+   * first-place finisher, so we swap the boards in directly rather than
+   * refetching — then re-pull the roster so per-user totals on the Users page
+   * stay honest. The celebration still rides on the winner alone: a race has
+   * many finishers, but only the podium's top step earns the flyby.
    */
-  const awardWin = useCallback(async (winnerId: string, note?: string) => {
-    const result = await api.award(winnerId, note);
+  const recordGame = useCallback(
+    async (results: GameResultInput[], events: KillEventInput[] = [], note?: string) => {
+    const result = await api.recordGame(results, events, note);
 
     setState((prev) => ({
       ...prev,
       /*
        * Take `periods` from the response too, not just the boards. The server
-       * derives the month/day keys at award time, so on a long-lived tab (this
+       * derives the month/day keys at record time, so on a long-lived tab (this
        * app is meant to live on a wall display) this is what rolls the client
        * over midnight. Keeping the old `periods` would leave the "Today" tab
        * labelled with yesterday and the roster's Today column reading zero.
@@ -144,7 +153,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const users = await api.users().catch(() => null);
     if (users) setState((prev) => ({ ...prev, users }));
 
-    return users?.find((user) => user.id === winnerId) ?? null;
+    return users?.find((user) => user.id === result.winner.id) ?? null;
   }, []);
 
   const patchMe = useCallback((next: PublicUser) => {
@@ -153,6 +162,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       me: next,
       users: prev.users.map((user) => (user.id === next.id ? next : user)),
     }));
+  }, []);
+
+  const refreshUsers = useCallback(async () => {
+    const users = await api.users().catch(() => null);
+    if (users) setState((prev) => ({ ...prev, users }));
   }, []);
 
   const refreshPuns = useCallback(async () => {
@@ -174,13 +188,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ...state,
       reload: boot,
       logout,
-      awardWin,
+      recordGame,
       patchMe,
       refreshPuns,
+      refreshUsers,
       clearCelebration,
       userById,
     }),
-    [state, boot, logout, awardWin, patchMe, refreshPuns, clearCelebration, userById],
+    [
+      state,
+      boot,
+      logout,
+      recordGame,
+      patchMe,
+      refreshPuns,
+      refreshUsers,
+      clearCelebration,
+      userById,
+    ],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

@@ -3,6 +3,7 @@ import { Response } from 'express';
 import archiver from 'archiver';
 import { MongoService } from './mongo.service';
 import { dayKey, timezoneName } from '../common/period.util';
+import type { PublicUser } from '@scrapyard/shared';
 
 export interface ExportManifest {
   exportedAt: string;
@@ -16,7 +17,7 @@ export interface ExportManifest {
 }
 
 /** Collections dumped, in the order they appear in the archive. */
-const COLLECTIONS = ['users', 'wins', 'content'] as const;
+const COLLECTIONS = ['users', 'games', 'metrics', 'achievementRules', 'content'] as const;
 
 /**
  * Streams the whole database out as a zip of JSON files.
@@ -49,7 +50,7 @@ export class ExportService {
    * the connection. That leaves a truncated, detectably-invalid zip rather than
    * silently-wrong data.
    */
-  async streamTo(response: Response, actorEmail: string): Promise<void> {
+  async streamTo(response: Response, actor: PublicUser): Promise<void> {
     const archive = archiver('zip', { zlib: { level: 9 } });
 
     archive.on('warning', (error) => this.logger.warn(`Archive warning: ${error.message}`));
@@ -85,7 +86,10 @@ export class ExportService {
 
     const manifest: ExportManifest = {
       exportedAt: new Date().toISOString(),
-      exportedBy: actorEmail,
+      // Fine to record in the manifest itself — it's inside the zip the admin
+      // just requested for themselves, not a server log. Only the log line
+      // below stays on the admin's id.
+      exportedBy: actor.email,
       timezone: timezoneName(),
       database: process.env.MONGODB_DB || 'scrapyard',
       counts,
@@ -96,7 +100,7 @@ export class ExportService {
     archive.append(readmeText(manifest), { name: 'README.txt' });
 
     this.logger.log(
-      `Export by ${actorEmail}: ${Object.entries(counts)
+      `Export by admin ${actor.id}: ${Object.entries(counts)
         .map(([k, v]) => `${k}=${v}`)
         .join(' ')}`,
     );
@@ -107,7 +111,7 @@ export class ExportService {
   /** Counts without building the archive — drives the admin card. */
   async summary(): Promise<{
     users: number;
-    wins: number;
+    games: number;
     content: number;
     totalBytes: number;
   }> {
@@ -123,9 +127,11 @@ export class ExportService {
      * elevated privileges an Atlas application user typically doesn't have, and
      * this only drives a number on a card.
      */
-    const totalBytes = counts.users * 400 + counts.wins * 200 + counts.content * 6000;
+    const totalBytes =
+      counts.users * 400 + counts.games * 320 + counts.metrics * 300 +
+      counts.achievementRules * 300 + counts.content * 6000;
 
-    return { users: counts.users, wins: counts.wins, content: counts.content, totalBytes };
+    return { users: counts.users, games: counts.games, content: counts.content, totalBytes };
   }
 }
 
@@ -140,21 +146,25 @@ Timezone    : ${manifest.timezone}
 
 Contents
 --------
-database/users.json    one document per racer, _id = the Google 'sub' claim
-database/wins.json     one immutable document per win — THE SOURCE OF TRUTH
-database/content.json  editable site content (banner puns)
-manifest.json          counts and byte sizes for this export
+database/users.json             one document per racer, _id = the Google 'sub' claim
+database/games.json             one immutable document per race — THE SOURCE OF TRUTH
+database/metrics.json           admin-defined captured & formula metrics
+database/achievementRules.json  admin-defined achievement rules
+database/content.json           editable site content (banner puns)
+manifest.json                   counts and byte sizes for this export
 
-There are no scoreboard files. Leaderboards are aggregations over wins computed
-on read, so there is no derived state to back up or restore.
+There are no scoreboard files. Leaderboards and achievements are aggregations
+over games computed on read, so there is no derived state to back up or restore.
 
 Restoring
 ---------
-  mongoimport --uri "$MONGODB_URI" --collection users   --file database/users.json   --jsonArray
-  mongoimport --uri "$MONGODB_URI" --collection wins    --file database/wins.json    --jsonArray
-  mongoimport --uri "$MONGODB_URI" --collection content --file database/content.json --jsonArray
+  mongoimport --uri "$MONGODB_URI" --collection users            --file database/users.json            --jsonArray
+  mongoimport --uri "$MONGODB_URI" --collection games            --file database/games.json            --jsonArray
+  mongoimport --uri "$MONGODB_URI" --collection metrics          --file database/metrics.json          --jsonArray
+  mongoimport --uri "$MONGODB_URI" --collection achievementRules --file database/achievementRules.json --jsonArray
+  mongoimport --uri "$MONGODB_URI" --collection content          --file database/content.json          --jsonArray
 
 Add --drop to replace collections rather than merge into them. Note that
-'wins.at' is a BSON date; mongoimport understands the $date form in this dump.
+'games.at' is a BSON date; mongoimport understands the $date form in this dump.
 `;
 }

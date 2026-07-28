@@ -23,6 +23,7 @@ import { ContentService, ContentTypeDescriptor } from './content.service';
 import { ExportService } from '../database/export.service';
 import type { Pun } from '@scrapyard/shared';
 import { AchievementsService } from '../achievements/achievements.service';
+import { MetricsService } from '../metrics/metrics.service';
 import { RACERS } from '../users/users.service';
 
 export class CreatePunDto {
@@ -62,22 +63,30 @@ export class AdminContentController {
   constructor(
     private readonly content: ContentService,
     private readonly achievements: AchievementsService,
+    private readonly metrics: MetricsService,
     private readonly exporter: ExportService,
   ) {}
 
   /** Cards for the searchable grid menu. */
   @Get('types')
   async types(): Promise<ContentTypeDescriptor[]> {
-    const summary = await this.exporter.summary();
-    const documents = summary.users + summary.wins + summary.content;
-    return this.content.describeTypes(documents);
+    const [summary, achDefs, metricDefs] = await Promise.all([
+      this.exporter.summary(),
+      this.achievements.definitions(),
+      this.metrics.definitions(),
+    ]);
+    const documents = summary.users + summary.games + summary.content;
+    return this.content.describeTypes(documents, achDefs.length, metricDefs.length);
   }
 
   /** Read-only previews so the non-editable cards still show something useful. */
   @Get('types/:id/preview')
   async preview(@Param('id') id: string): Promise<{ id: string; items: unknown[] }> {
     if (id === 'achievements') {
-      return { id, items: this.achievements.definitions() };
+      return { id, items: await this.achievements.definitions() };
+    }
+    if (id === 'metrics') {
+      return { id, items: await this.metrics.definitions() };
     }
     if (id === 'racers') {
       return { id, items: [...RACERS].map((name) => ({ name })) };

@@ -3,7 +3,8 @@ import { Plus, Radio } from 'lucide-react';
 import { useApp } from '../state/AppStore';
 import { LeaderboardTable } from '../components/LeaderboardTable';
 import { AddScoreOverlay } from '../components/AddScoreOverlay';
-import { Label, NeonButton, Panel, Segmented, Stat } from '../components/ui/primitives';
+import { RacerBadge } from '../components/RacerBadge';
+import { NeonButton, Panel, Segmented, Stat } from '../components/ui/primitives';
 import type { PeriodKind } from '@scrapyard/shared';
 
 /**
@@ -12,7 +13,7 @@ import type { PeriodKind } from '@scrapyard/shared';
  * instant — no fetch, no spinner.
  */
 export function MainPage() {
-  const { boards, users, me, awardWin } = useApp();
+  const { boards, users, me, recordGame } = useApp();
   const [tab, setTab] = useState<PeriodKind>('all-time');
   const [overlayOpen, setOverlayOpen] = useState(false);
 
@@ -25,19 +26,18 @@ export function MainPage() {
 
   if (!boards || !board) return null;
 
-  const scoredToday = boards.daily.entries.filter((entry) => entry.points > 0).length;
-  const leader = boards.allTime.entries.find((entry) => entry.points > 0);
-  const dailyLeader = boards.daily.entries.find((entry) => entry.points > 0);
+  const scoredToday = boards.daily.entries.filter((entry) => entry.primary > 0).length;
+  const leader = boards.allTime.entries.find((entry) => entry.primary > 0);
+  const dailyLeader = boards.daily.entries.find((entry) => entry.primary > 0);
 
   return (
     <div className="space-y-7">
       {/* Hero row. */}
       <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0">
-          <Label>Standings</Label>
-          <h1 className="headline mt-1">The Scrapyard</h1>
+          <h1 className="headline">Leaderboard</h1>
           <p className="mt-2 max-w-xl text-sm text-[var(--text-dim)]">
-            Every win is one point. Boards recompute the moment a score lands.
+            Ranked by wins. Sort by any stat. Boards recompute the moment a race lands.
           </p>
         </div>
 
@@ -45,11 +45,11 @@ export function MainPage() {
           variant="primary"
           ring
           accent="#FF6A00"
-          className="shrink-0 !py-3.5 !text-xs lg:!text-sm"
+          className="cta-nudge shrink-0 !py-3.5 !text-xs lg:!text-sm"
           onClick={() => setOverlayOpen(true)}
         >
           <Plus size={16} strokeWidth={3} />
-          Add Score
+          Record Race
         </NeonButton>
       </div>
 
@@ -63,20 +63,20 @@ export function MainPage() {
         />
         <Stat
           label="All-time wins"
-          value={boards.allTime.totalPoints}
+          value={boards.allTime.total}
           hint="recorded across the crew"
           accent="#FF6A00"
         />
         <Stat
           label="Today"
-          value={boards.daily.totalPoints}
+          value={boards.daily.total}
           hint={`${scoredToday} ${scoredToday === 1 ? 'racer' : 'racers'} on the board`}
           accent="#B6FF3C"
         />
         <Stat
           label="Reigning"
           value={leader ? leader.displayName.split(' ')[0] : '—'}
-          hint={leader ? `${leader.points} wins` : 'nobody yet'}
+          hint={leader ? `${leader.primary} ${leader.primary === 1 ? 'win' : 'wins'}` : 'nobody yet'}
           accent="#FFB020"
         />
       </Panel>
@@ -91,13 +91,20 @@ export function MainPage() {
           }}
         >
           <Radio size={15} className="shrink-0 animate-pulse" style={{ color: dailyLeader.accentColor }} />
-          <p className="min-w-0 truncate text-xs text-[var(--text-dim)]">
-            <span className="font-display font-bold uppercase tracking-wider text-white">
-              {dailyLeader.displayName}
-            </span>{' '}
-            leads today with {dailyLeader.points}{' '}
-            {dailyLeader.points === 1 ? 'win' : 'wins'}
-            {dailyLeader.tied && ' (tied)'}.
+          <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-[var(--text-dim)]">
+            <RacerBadge
+              id={dailyLeader.userId}
+              name={dailyLeader.displayName}
+              avatarUrl={dailyLeader.avatarUrl}
+              accentColor={dailyLeader.accentColor}
+              size={20}
+              className="font-display font-bold uppercase tracking-wider text-white"
+            />
+            <span>
+              leads today with {dailyLeader.primary}{' '}
+              {dailyLeader.primary === 1 ? 'win' : 'wins'}
+              {dailyLeader.tied && ' (tied)'}.
+            </span>
           </p>
         </div>
       )}
@@ -108,7 +115,7 @@ export function MainPage() {
         onChange={setTab}
         accent="#FF6A00"
         options={[
-          { value: 'all-time', label: 'All Time', hint: `${boards.allTime.totalPoints}` },
+          { value: 'all-time', label: 'All Time', hint: `${boards.allTime.total}` },
           { value: 'monthly', label: 'This Month', hint: boards.periods.month },
           { value: 'daily', label: 'Today', hint: boards.periods.day },
         ]}
@@ -142,7 +149,7 @@ export function MainPage() {
         open={overlayOpen}
         users={users}
         onClose={() => setOverlayOpen(false)}
-        onSubmit={awardWin}
+        onSubmit={recordGame}
       />
     </div>
   );

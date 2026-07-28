@@ -1,78 +1,127 @@
 import { Injectable } from '@nestjs/common';
 import { MongoService } from './mongo.service';
+import { MetricsService } from '../metrics/metrics.service';
+import { DEFAULT_METRIC } from '../metrics/metrics.constants';
 import type { LeaderboardEntry, PeriodKind, Scoreboard } from '@scrapyard/shared';
 import { dayKey, monthKey, periodLabel } from '../common/period.util';
+
+/** Trim float noise from averages and formula results. */
+function tidy(value: number): number {
+  return Math.round(value * 100) / 100;
+}
 
 /**
  * Scoreboards, computed on read.
  *
- * This file replaces what used to be ~200 lines across ScoreboardBuilder,
- * IndexService and a five-file write cascade guarded by an in-process mutex.
- * All of that existed to keep derived copies in step with the source of truth.
+ * A board is a `$group` over the `games` collection, unwound by finisher. Every
+ * metric — the built-in derived ones plus each admin-defined captured metric —
+ * is aggregated in that single pass; formula metrics are folded in afterwards
+ * from the per-racer totals. The client receives every metric per racer and the
+ * column definitions, so it can sort any board by any column.
  *
- * With wins as immutable events there is nothing to keep in step: a board is a
- * `$group` over the `wins` collection. Drift isn't prevented, it's impossible.
- * That also means no single-writer constraint, so the app can run on as many
- * instances as you like.
+ * With games as immutable events there is nothing to keep in step: drift isn't
+ * prevented, it's impossible. No single-writer constraint either, so the app
+ * scales to as many instances as you like.
  */
 @Injectable()
 export class ScoreboardRepository {
-  constructor(private readonly mongo: MongoService) {}
+  constructor(
+    private readonly mongo: MongoService,
+    private readonly metrics: MetricsService,
+  ) {}
 
-  /**
-   * One period's board.
-   *
-   * A `$lookup` back onto `users` attaches the display fields, so the client can
-   * render a row without cross-referencing the roster. `$unwind` with
-   * `preserveNullAndEmptyArrays: false` quietly drops wins whose racer has been
-   * deleted — which is the orphan cleanup we used to run by hand.
-   */
   async board(kind: PeriodKind, key: string): Promise<Scoreboard> {
-    const wins = await this.mongo.wins();
+    const games = await this.mongo.games();
+    const registry = await this.metrics.registry();
+    const columns = this.metrics.columns(registry.enabled);
 
     const match =
       kind === 'all-time' ? {} : kind === 'monthly' ? { monthKey: key } : { dayKey: key };
 
-    const rows = await wins
-      .aggregate<{
-        _id: string;
-        points: number;
-        user: {
-          displayName: string;
-          avatarUrl: string;
-          accentColor: string;
-          favoriteRacer: string;
-        };
-      }>([
+    // Base aggregation: the derived metrics, plus each captured metric grouped
+    // by its own aggregation. `cap_<id>` keeps captured fields namespaced.
+    const group: Record<string, unknown> = {
+      _id: '$results.racerId',
+      wins: { $sum: { $cond: [{ $eq: ['$results.place', 1] }, 1, 0] } },
+      podiums: { $sum: { $cond: [{ $lte: ['$results.place', 3] }, 1, 0] } },
+      races: { $sum: 1 },
+      gameScore: { $sum: '$results.gameScore' },
+      bestScore: { $max: '$results.gameScore' },
+      placeSum: { $sum: '$results.place' },
+    };
+    for (const metric of registry.captured) {
+      const value = { $ifNull: [`$results.stats.${metric.id}`, 0] };
+      const op =
+        metric.aggregation === 'max' ? '$max' : metric.aggregation === 'avg' ? '$avg' : '$sum';
+      group[`cap_${metric.id}`] = { [op]: value };
+    }
+
+    type Row = Record<string, number> & {
+      _id: string;
+      user: {
+        displayName: string;
+        avatarUrl: string;
+        accentColor: string;
+        favoriteRacer: string;
+      };
+    };
+
+    const rows = await games
+      .aggregate<Row>([
         { $match: match },
-        { $group: { _id: '$userId', points: { $sum: 1 } } },
-        {
-          $lookup: {
-            from: 'users',
-            localField: '_id',
-            foreignField: '_id',
-            as: 'user',
-          },
-        },
+        { $unwind: '$results' },
+        { $group: group },
+        { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'user' } },
         { $unwind: { path: '$user', preserveNullAndEmptyArrays: false } },
-        {
-          $project: {
-            points: 1,
-            'user.displayName': 1,
-            'user.avatarUrl': 1,
-            'user.accentColor': 1,
-            'user.favoriteRacer': 1,
-          },
-        },
-        // Descending points, then name, so ties are ordered deterministically.
-        { $sort: { points: -1, 'user.displayName': 1 } },
+        // Descending wins, then name, so ties are ordered deterministically.
+        { $sort: { wins: -1, 'user.displayName': 1 } },
       ])
       .toArray();
 
-    /*
-     * Racers with zero wins in this period don't appear in `wins` at all, so
-     * they're appended here. The UI shows them as a "yet to score" strip.
-     */
+    const metricsFor = (row: Record<string, number>): Record<string, number> => {
+      const races = row.races ?? 0;
+      const base: Record<string, number> = {
+        wins: row.wins ?? 0,
+        podiums: row.podiums ?? 0,
+        races,
+        gameScore: row.gameScore ?? 0,
+        bestScore: row.bestScore ?? 0,
+        avgPlace: races > 0 ? tidy((row.placeSum ?? 0) / races) : 0,
+      };
+      for (const metric of registry.captured) base[metric.id] = tidy(row[`cap_${metric.id}`] ?? 0);
+      const formulas = this.metrics.computeFormulas(base, registry.formulas);
+      for (const [id, value] of Object.entries(formulas)) base[id] = tidy(value);
+      return base;
+    };
+
+    const entries: LeaderboardEntry[] = [];
+    let lastPrimary: number | null = null;
+    let lastRank = 0;
+
+    rows.forEach((row, position) => {
+      const primary = row.wins ?? 0;
+      const tied = lastPrimary === primary;
+      const rank = tied ? lastRank : position + 1;
+      if (!tied) {
+        lastRank = rank;
+        lastPrimary = primary;
+      }
+      const metrics = metricsFor(row);
+      entries.push({
+        rank,
+        userId: row._id,
+        displayName: row.user.displayName,
+        avatarUrl: row.user.avatarUrl,
+        accentColor: row.user.accentColor,
+        favoriteRacer: row.user.favoriteRacer,
+        primary: metrics[DEFAULT_METRIC] ?? 0,
+        metrics,
+        tied,
+      });
+    });
+
+    // Racers with no result in this period don't appear in `games`; append them
+    // with zeroed metrics so the "yet to score" strip can render.
     const users = await this.mongo.users();
     const scored = new Set(rows.map((r) => r._id));
     const unscored = await users
@@ -83,29 +132,7 @@ export class ScoreboardRepository {
       .sort({ displayName: 1 })
       .toArray();
 
-    const entries: LeaderboardEntry[] = [];
-    let lastPoints: number | null = null;
-    let lastRank = 0;
-
-    rows.forEach((row, position) => {
-      const tied = lastPoints === row.points;
-      const rank = tied ? lastRank : position + 1;
-      if (!tied) {
-        lastRank = rank;
-        lastPoints = row.points;
-      }
-      entries.push({
-        rank,
-        userId: row._id,
-        displayName: row.user.displayName,
-        avatarUrl: row.user.avatarUrl,
-        accentColor: row.user.accentColor,
-        favoriteRacer: row.user.favoriteRacer,
-        points: row.points,
-        tied,
-      });
-    });
-
+    const zeroMetrics = metricsFor({} as Record<string, number>);
     const zeroRank = rows.length + 1;
     unscored.forEach((user, i) => {
       entries.push({
@@ -115,7 +142,8 @@ export class ScoreboardRepository {
         avatarUrl: user.avatarUrl,
         accentColor: user.accentColor,
         favoriteRacer: user.favoriteRacer,
-        points: 0,
+        primary: 0,
+        metrics: { ...zeroMetrics },
         tied: i > 0 || rows.length > 0,
       });
     });
@@ -125,7 +153,9 @@ export class ScoreboardRepository {
       key,
       label: periodLabel(kind, key),
       generatedAt: new Date().toISOString(),
-      totalPoints: rows.reduce((sum, r) => sum + r.points, 0),
+      defaultMetric: DEFAULT_METRIC,
+      columns,
+      total: rows.reduce((sum, r) => sum + (r.wins ?? 0), 0),
       entries,
     };
   }
@@ -145,23 +175,21 @@ export class ScoreboardRepository {
   }
 
   /**
-   * Win counts per racer for the periods the UI renders.
-   *
-   * One aggregation for the whole roster rather than N queries — this backs
-   * `GET /users`, which the client calls on boot.
+   * Win counts (first-place finishes) per racer for the periods the UI renders.
+   * Backs `GET /users` and the profile ranks.
    */
-  async scoresByUser(): Promise<
-    Map<string, { allTime: number; month: number; day: number }>
-  > {
-    const wins = await this.mongo.wins();
+  async scoresByUser(): Promise<Map<string, { allTime: number; month: number; day: number }>> {
+    const games = await this.mongo.games();
     const month = monthKey();
     const day = dayKey();
 
-    const rows = await wins
+    const rows = await games
       .aggregate<{ _id: string; allTime: number; month: number; day: number }>([
+        { $unwind: '$results' },
+        { $match: { 'results.place': 1 } },
         {
           $group: {
-            _id: '$userId',
+            _id: '$results.racerId',
             allTime: { $sum: 1 },
             month: { $sum: { $cond: [{ $eq: ['$monthKey', month] }, 1, 0] } },
             day: { $sum: { $cond: [{ $eq: ['$dayKey', day] }, 1, 0] } },
@@ -173,12 +201,12 @@ export class ScoreboardRepository {
     return new Map(rows.map((r) => [r._id, { allTime: r.allTime, month: r.month, day: r.day }]));
   }
 
-  /** Every period that has at least one win, for the archive picker. */
+  /** Every period that has at least one game, for the archive picker. */
   async knownPeriods(): Promise<{ months: string[]; days: string[] }> {
-    const wins = await this.mongo.wins();
+    const games = await this.mongo.games();
     const [months, days] = await Promise.all([
-      wins.distinct('monthKey'),
-      wins.distinct('dayKey'),
+      games.distinct('monthKey'),
+      games.distinct('dayKey'),
     ]);
     return {
       months: [...new Set([...months, monthKey()])].sort().reverse(),

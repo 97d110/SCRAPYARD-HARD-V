@@ -1,13 +1,17 @@
 import {
   Body,
   Controller,
+  Delete,
   ForbiddenException,
   Get,
+  HttpCode,
   Param,
   Patch,
+  Post,
   UseGuards,
 } from '@nestjs/common';
 import {
+  IsEmail,
   IsHexColor,
   IsIn,
   IsOptional,
@@ -15,7 +19,7 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
-import { CurrentUser, JwtAuthGuard } from '../auth/guards';
+import { AdminGuard, CurrentUser, JwtAuthGuard } from '../auth/guards';
 import { ACCENT_COLORS, RACERS, UsersService } from './users.service';
 import { AchievementsService } from '../achievements/achievements.service';
 import type { ProfileBundle, PublicUser } from '@scrapyard/shared';
@@ -36,6 +40,40 @@ export class UpdateProfileDto {
 
   @IsOptional() @IsHexColor()
   accentColor?: string;
+}
+
+export class CreateRacerDto {
+  @IsEmail() @MaxLength(254)
+  email!: string;
+
+  @IsString() @MinLength(2) @MaxLength(40)
+  displayName!: string;
+}
+
+/**
+ * Admin: manage the roster.
+ *
+ * Separate controller from `/users` so the admin routes carry AdminGuard by
+ * declaration rather than by a check inside each handler — nobody can add a
+ * method here and forget the guard.
+ */
+@Controller('admin/users')
+@UseGuards(JwtAuthGuard, AdminGuard)
+export class AdminUsersController {
+  constructor(private readonly users: UsersService) {}
+
+  /** Add a racer by email before they've ever signed in. */
+  @Post()
+  async create(@Body() dto: CreateRacerDto): Promise<PublicUser> {
+    return this.users.createUnclaimed(dto);
+  }
+
+  /** Undo a typo. Only works while the seat is unclaimed and has no wins. */
+  @Delete(':id')
+  @HttpCode(204)
+  async remove(@Param('id') id: string): Promise<void> {
+    return this.users.deleteUnclaimed(id);
+  }
 }
 
 @Controller('users')

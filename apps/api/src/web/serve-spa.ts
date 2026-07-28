@@ -80,7 +80,13 @@ export function mountSpa(app: NestExpressApplication): void {
     url.startsWith('/login?') ||
     url.startsWith(LOGIN_ASSETS_ROUTE) ||
     url === '/health' ||
-    url === '/favicon.ico';
+    url === '/favicon.ico' ||
+    // PWA assets must resolve before the session gate: the manifest and icons
+    // drive the install prompt, and the service worker registers at the root
+    // scope — all of which the browser fetches without carrying our cookie.
+    url === '/manifest.webmanifest' ||
+    url === '/sw.js' ||
+    url.startsWith('/icons/');
 
   const session = app.get(SessionReader);
 

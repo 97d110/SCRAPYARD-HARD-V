@@ -105,6 +105,32 @@ async function bootstrap(): Promise<void> {
       ? `CORS origins: ${origins.join(', ')}`
       : 'CORS disabled — same-origin only (WEB_ORIGIN is unset)',
   );
+
+  /*
+   * Free Render instances have no shell, so the only way to inspect a
+   * deployment is the log stream. Run the connectivity checks at boot and put
+   * the verdict there.
+   *
+   * Deliberately after listen() and never awaited: a failing check must not
+   * stop the service from serving /login, which is where the operator will be
+   * looking. PREFLIGHT=off silences it.
+   */
+  if (process.env.PREFLIGHT !== 'off') {
+    void (async () => {
+      try {
+        const { runPreflight, formatReport } = await import('./diagnostics/preflight');
+        const checks = await runPreflight();
+        const report = `Preflight\n${formatReport(checks)}`;
+        if (checks.some((check) => check.status === 'fail')) {
+          logger.error(report);
+        } else {
+          logger.log(report);
+        }
+      } catch (error) {
+        logger.warn(`Preflight could not run: ${error instanceof Error ? error.message : error}`);
+      }
+    })();
+  }
 }
 
 void bootstrap();

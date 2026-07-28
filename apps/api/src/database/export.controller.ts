@@ -17,7 +17,7 @@ export class ExportController {
   @Get('summary')
   async summary(): Promise<{
     users: number;
-    wins: number;
+    games: number;
     content: number;
     totalBytes: number;
     filename: string;
@@ -47,6 +47,6 @@ export class ExportController {
     response.setHeader('X-Scrapyard-Filename', filename);
     response.setHeader('Access-Control-Expose-Headers', 'X-Scrapyard-Filename');
 
-    await this.exporter.streamTo(response, actor.email);
+    await this.exporter.streamTo(response, actor);
   }
 }

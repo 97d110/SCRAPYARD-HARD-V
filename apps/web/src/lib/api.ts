@@ -1,13 +1,71 @@
 import type {
-  AwardResponse,
+  AchievementRule,
+  AchievementScope,
+  AchievementTier,
   ContentTypeDescriptor,
   CurrentBoards,
   ExportSummary,
+  FormulaTerm,
+  GameResultInput,
+  KillEventInput,
+  MetricAggregation,
+  MetricDef,
   ProfileBundle,
   PublicUser,
   Pun,
+  RecordGameResponse,
   Scoreboard,
 } from '@scrapyard/shared';
+
+/**
+ * Request bodies for the admin metric/achievement editors. Kept here rather
+ * than imported from shared because they mirror the server-side DTOs (which
+ * are validation classes, not exported types) — the fields an editor sends,
+ * not a stored document.
+ */
+export interface CreateMetricInput {
+  id: string;
+  label: string;
+  kind: 'captured' | 'formula';
+  icon?: string;
+  unit?: string;
+  description?: string;
+  aggregation?: MetricAggregation;
+  formula?: FormulaTerm[];
+}
+
+export interface UpdateMetricInput {
+  label?: string;
+  icon?: string;
+  unit?: string;
+  description?: string;
+  aggregation?: MetricAggregation;
+  formula?: FormulaTerm[];
+  enabled?: boolean;
+  order?: number;
+}
+
+export interface CreateRuleInput {
+  name: string;
+  description?: string;
+  tier?: AchievementTier;
+  icon?: string;
+  metricId: string;
+  scope: AchievementScope;
+  threshold: number;
+}
+
+export interface UpdateRuleInput {
+  name?: string;
+  description?: string;
+  tier?: AchievementTier;
+  icon?: string;
+  metricId?: string;
+  scope?: AchievementScope;
+  threshold?: number;
+  enabled?: boolean;
+  order?: number;
+}
 
 const BASE = '/api';
 
@@ -79,13 +137,22 @@ export const api = {
   // --- scores -------------------------------------------------------------
   boards: () => request<CurrentBoards>('/scores'),
   board: (key: string) => request<Scoreboard>(`/scores/board/${encodeURIComponent(key)}`),
-  boardIndex: () =>
-    request<Array<{ kind: string; key: string; label: string; totalPoints: number }>>('/scores/boards'),
-  award: (winnerId: string, note?: string) =>
-    request<AwardResponse>('/scores/award', {
+  boardIndex: () => request<Array<{ kind: string; key: string }>>('/scores/boards'),
+  /**
+   * Record a whole race — 2–4 finishers with their place, in-game score and
+   * captured stats. Replaces the old single-winner `award`. The response
+   * carries all three freshly-derived boards plus the first-place finisher so
+   * the celebration can fire without a refetch.
+   */
+  recordGame: (results: GameResultInput[], events: KillEventInput[] = [], note?: string) =>
+    request<RecordGameResponse>('/scores/record', {
       method: 'POST',
-      body: JSON.stringify(note ? { winnerId, note } : { winnerId }),
+      body: JSON.stringify({ results, events, ...(note ? { note } : {}) }),
     }),
+
+  // --- metrics ------------------------------------------------------------
+  /** Enabled metric registry — the race-entry form reads the captured ones. */
+  metrics: () => request<MetricDef[]>('/metrics'),
 
   // --- content ------------------------------------------------------------
   puns: () => request<Pun[]>('/content/puns'),
@@ -112,6 +179,52 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ ids }),
       }),
+
+    // --- metrics registry -------------------------------------------------
+    metrics: {
+      /** The full registry, built-ins included, for the editor. */
+      list: () => request<MetricDef[]>('/admin/metrics'),
+      create: (input: CreateMetricInput) =>
+        request<MetricDef>('/admin/metrics', { method: 'POST', body: JSON.stringify(input) }),
+      update: (id: string, patch: UpdateMetricInput) =>
+        request<MetricDef>(`/admin/metrics/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify(patch),
+        }),
+      remove: (id: string) =>
+        request<void>(`/admin/metrics/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    },
+
+    // --- achievement rules ------------------------------------------------
+    achievementRules: {
+      list: () => request<AchievementRule[]>('/admin/achievement-rules'),
+      create: (input: CreateRuleInput) =>
+        request<AchievementRule>('/admin/achievement-rules', {
+          method: 'POST',
+          body: JSON.stringify(input),
+        }),
+      update: (id: string, patch: UpdateRuleInput) =>
+        request<AchievementRule>(`/admin/achievement-rules/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify(patch),
+        }),
+      remove: (id: string) =>
+        request<void>(`/admin/achievement-rules/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    },
+
+    /**
+     * Add a teammate who hasn't signed in yet. The seat can hold wins
+     * immediately; their first Google login attaches to it by email.
+     */
+    createRacer: (email: string, displayName: string) =>
+      request<PublicUser>('/admin/users', {
+        method: 'POST',
+        body: JSON.stringify({ email, displayName }),
+      }),
+
+    /** Only permitted while the seat is unclaimed and has no wins. */
+    deleteRacer: (id: string) =>
+      request<void>(`/admin/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
     exportSummary: () => request<ExportSummary>('/admin/export/summary'),
 

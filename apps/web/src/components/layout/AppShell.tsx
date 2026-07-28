@@ -12,9 +12,29 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../state/AppStore';
 import { PunTicker } from '../PunTicker';
-import { ArthurShip } from '../arthur/ArthurShip';
+import { ArthurLottie } from '../arthur/ArthurLottie';
 import { ArthurFlyby } from '../arthur/ArthurFlyby';
 import { Avatar } from '../ui/primitives';
+
+/**
+ * Deterministic scatter for the wordmark ship's ambient sparks — generated
+ * once, not per render. Each one idles for most of its own cycle and only
+ * briefly flares outward (see `.hero-spark` in index.css); uneven per-spark
+ * duration/delay is what keeps the bursts from firing in lockstep.
+ */
+const SHIP_SPARKS = Array.from({ length: 8 }, (_, i) => {
+  const angle = (i / 8) * Math.PI * 2 + i * 0.5;
+  const dist = 20 + (i % 3) * 8;
+  return {
+    id: i,
+    dx: Math.round(Math.cos(angle) * dist),
+    dy: Math.round(Math.sin(angle) * dist),
+    delay: Number(((i * 0.35) % 2).toFixed(2)),
+    duration: 2 + (i % 4) * 0.5,
+    size: i % 3 === 0 ? 3 : 2,
+    white: i % 3 === 0,
+  };
+});
 
 /**
  * The chrome every page sits inside: pun ticker at the very top, then the
@@ -55,7 +75,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         onDone={clearCelebration}
       />
 
-      {/* Top prompter. */}
+      {/* Top prompter. The Cytactic mark lives inside it now, as a normal
+          child sharing the bar rather than floating above it. */}
       <div className="fixed inset-x-0 top-0 z-50">
         <PunTicker puns={puns} />
       </div>
@@ -75,15 +96,51 @@ export function AppShell({ children }: { children: ReactNode }) {
           </button>
 
           <Link to="/" className="group flex min-w-0 items-center gap-3">
-            <span className="shrink-0 transition-transform group-hover:scale-110">
-              <ArthurShip size={44} accent="#FF6A00" />
+            {/* The ship — bigger than before, with a soft breathing halo and
+                sparks that shoot outward and fade every so often rather than
+                continuously. */}
+            <span
+              className="relative shrink-0 transition-transform group-hover:scale-110"
+              aria-hidden="true"
+            >
+              <span
+                className="hero-ship-halo pointer-events-none absolute rounded-full"
+                style={{
+                  inset: '-8%',
+                  background: 'radial-gradient(circle, rgba(255,106,0,0.55), transparent 60%)',
+                  filter: 'blur(4px)',
+                }}
+              />
+              {SHIP_SPARKS.map((spark) => (
+                <span
+                  key={spark.id}
+                  className="hero-spark pointer-events-none absolute left-1/2 top-1/2 rounded-full"
+                  style={{
+                    width: spark.size,
+                    height: spark.size,
+                    background: spark.white ? '#fff' : '#FF6A00',
+                    boxShadow: '0 0 6px #FF6A00',
+                    ['--dx' as string]: `${spark.dx}px`,
+                    ['--dy' as string]: `${spark.dy}px`,
+                    ['--dur' as string]: `${spark.duration}s`,
+                    animationDelay: `${spark.delay}s`,
+                  }}
+                />
+              ))}
+              <ArthurLottie size={56} accent="#FF6A00" className="relative" />
             </span>
             <span className="min-w-0">
               <span className="headline block truncate text-lg leading-none sm:text-2xl 3xl:text-3xl">
-                Scrapyard
+                Scrapyard Hard V
               </span>
-              <span className="label hidden text-[0.5rem] sm:block">
-                No health · No levelling · No brakes
+              <span className="label hidden items-center gap-1 text-[0.5rem] sm:flex">
+                <img
+                  src="/cytactic-logo.png"
+                  alt=""
+                  className="h-3 w-3 shrink-0"
+                  draggable={false}
+                />
+                Cytactic&rsquo;s Blaze Rush Leaderboard
               </span>
             </span>
           </Link>
@@ -144,7 +201,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             style={{ animation: 'rise 260ms cubic-bezier(0.16,1,0.3,1) both' }}
           >
             <div className="flex items-center justify-between border-b border-hairline px-4 py-4">
-              <span className="headline text-lg">Scrapyard</span>
+              <span className="headline text-lg">Scrapyard Hard V</span>
               <button
                 className="btn btn-ghost !px-2 !py-1.5"
                 onClick={() => setMenuOpen(false)}
