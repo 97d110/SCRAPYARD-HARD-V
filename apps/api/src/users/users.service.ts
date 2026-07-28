@@ -179,7 +179,6 @@ export class UsersService {
     const users = await this.mongo.users();
     const email = input.email.trim().toLowerCase();
     const emailHash = blindIndex(email);
-    const domain = email.split('@')[1] ?? '';
     const now = new Date().toISOString();
     const googleId = this.assertId(input.googleId);
     const googleIdHash = blindIndex(googleId);
@@ -284,7 +283,6 @@ export class UsersService {
           googleIdHash,
           emailEnc: encryptField(email),
           emailHash,
-          domain,
           role,
           googleFullName: input.fullName || existing?.googleFullName || email.split('@')[0],
           googleAvatarUrl: input.avatarUrl || existing?.googleAvatarUrl || '',
@@ -320,7 +318,6 @@ export class UsersService {
       throw new BadRequestException('That does not look like an email address');
     }
 
-    const domain = email.split('@')[1] ?? '';
     if (!isAllowedEmail(email)) {
       throw new BadRequestException(
         `Only ${allowedDomains().map((d) => `@${d}`).join(' / ')} addresses can race here`,
@@ -337,7 +334,6 @@ export class UsersService {
       _id: randomUUID(),
       emailEnc: encryptField(email),
       emailHash: blindIndex(email),
-      domain,
       // Never granted here. ADMIN_EMAILS is reconciled at login and is the
       // only path to admin, so this can't become a privilege-escalation route.
       role: 'racer',

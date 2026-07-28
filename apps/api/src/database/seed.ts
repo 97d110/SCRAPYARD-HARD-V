@@ -120,7 +120,6 @@ function buildUser(spec: SeedSpec, position: number): UserDoc {
     googleIdHash: blindIndex(googleId),
     emailEnc: encryptField(email),
     emailHash: blindIndex(email),
-    domain: DOMAIN,
     role: spec.role ?? 'racer',
     googleFullName: spec.name,
     googleAvatarUrl: '',

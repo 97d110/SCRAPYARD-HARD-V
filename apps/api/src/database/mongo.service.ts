@@ -56,7 +56,6 @@ export interface UserDoc {
   /** Absent until the racer completes a Google sign-in and claims the seat. */
   googleIdEnc?: string;
   googleIdHash?: string;
-  domain: string;
   role: UserRole;
   googleFullName: string;
   googleAvatarUrl: string;

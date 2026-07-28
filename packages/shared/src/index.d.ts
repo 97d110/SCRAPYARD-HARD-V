@@ -209,7 +209,6 @@ export interface UserRecord {
   id: string;
   googleId?: string;
   email: string;
-  domain: string;
   role: UserRole;
   googleFullName: string;
   googleAvatarUrl: string;
