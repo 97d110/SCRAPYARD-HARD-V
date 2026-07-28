@@ -1,7 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import {
-  LayoutGrid,
   LogOut,
   Menu,
   Shield,
@@ -13,28 +12,8 @@ import {
 import { useApp } from '../../state/AppStore';
 import { PunTicker } from '../PunTicker';
 import { ArthurFlyby } from '../arthur/ArthurFlyby';
-import { ArthurLottie } from '../arthur/ArthurLottie';
+import { ArthurShipFx } from '../arthur/ArthurShipFx';
 import { Avatar } from '../ui/primitives';
-
-/**
- * Deterministic scatter for the mobile-menu ship's ambient sparks — generated
- * once, not per render. Each one idles for most of its own cycle and only
- * briefly flares outward (see `.hero-spark` in index.css); uneven per-spark
- * duration/delay is what keeps the bursts from firing in lockstep.
- */
-const SHIP_SPARKS = Array.from({ length: 8 }, (_, i) => {
-  const angle = (i / 8) * Math.PI * 2 + i * 0.5;
-  const dist = 28 + (i % 3) * 11;
-  return {
-    id: i,
-    dx: Math.round(Math.cos(angle) * dist),
-    dy: Math.round(Math.sin(angle) * dist),
-    delay: Number(((i * 0.35) % 2).toFixed(2)),
-    duration: 2 + (i % 4) * 0.5,
-    size: i % 3 === 0 ? 3 : 2,
-    white: i % 3 === 0,
-  };
-});
 
 /**
  * The chrome every page sits inside: pun ticker at the very top, then the
@@ -86,7 +65,14 @@ export function AppShell({ children }: { children: ReactNode }) {
         className="fixed inset-x-0 z-40 border-b border-hairline bg-[#06080f]/85 backdrop-blur-xl"
         style={{ top: 'var(--ticker-h)', height: 'var(--topbar-h)' }}
       >
-        <div className="shell flex h-full items-center gap-3">
+        {/* Full-bleed on purpose, not `.shell` — on a wide desktop screen the
+            title bar should run to the edges rather than sit capped/centred
+            the way the page content below it does. Same padding formula as
+            `.shell` though, so the left inset still starts at a sane place. */}
+        <div
+          className="flex h-full w-full items-center gap-3"
+          style={{ paddingInline: 'clamp(1rem, 0.5rem + 2vw, 3rem)' }}
+        >
           <button
             className="btn btn-ghost !px-2.5 !py-2 lg:hidden"
             onClick={() => setMenuOpen(true)}
@@ -96,6 +82,13 @@ export function AppShell({ children }: { children: ReactNode }) {
           </button>
 
           <Link to="/" className="group flex min-w-0 items-center gap-3">
+            {/* Desktop only — on a narrow bar this is exactly what was
+                crowding the title into a truncated "SCRAPYA...". */}
+            <ArthurShipFx
+              size={56}
+              accent="#FF6A00"
+              className="hidden transition-transform group-hover:scale-110 lg:inline-flex"
+            />
             <span className="min-w-0">
               <span className="headline block truncate text-lg leading-none sm:text-2xl 3xl:text-3xl">
                 Scrapyard Hard V
@@ -171,35 +164,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             style={{ animation: 'rise 260ms cubic-bezier(0.16,1,0.3,1) both' }}
           >
             <div className="flex items-center justify-between border-b border-hairline px-4 py-3">
-              {/* The ship, with the same breathing halo + occasional outward
-                  sparks that used to sit next to the desktop title. */}
-              <span className="relative shrink-0" aria-hidden="true">
-                <span
-                  className="hero-ship-halo pointer-events-none absolute rounded-full"
-                  style={{
-                    inset: '-8%',
-                    background: 'radial-gradient(circle, rgba(255,106,0,0.55), transparent 60%)',
-                    filter: 'blur(4px)',
-                  }}
-                />
-                {SHIP_SPARKS.map((spark) => (
-                  <span
-                    key={spark.id}
-                    className="hero-spark pointer-events-none absolute left-1/2 top-1/2 rounded-full"
-                    style={{
-                      width: spark.size,
-                      height: spark.size,
-                      background: spark.white ? '#fff' : '#FF6A00',
-                      boxShadow: '0 0 6px #FF6A00',
-                      ['--dx' as string]: `${spark.dx}px`,
-                      ['--dy' as string]: `${spark.dy}px`,
-                      ['--dur' as string]: `${spark.duration}s`,
-                      animationDelay: `${spark.delay}s`,
-                    }}
-                  />
-                ))}
-                <ArthurLottie size={80} accent="#FF6A00" className="relative" />
-              </span>
+              <ArthurShipFx size={80} accent="#FF6A00" />
               <button
                 className="btn btn-ghost !px-2 !py-1.5"
                 onClick={() => setMenuOpen(false)}
@@ -254,12 +219,6 @@ export function AppShell({ children }: { children: ReactNode }) {
         style={{ paddingTop: 'calc(var(--ticker-h) + var(--topbar-h))' }}
       >
         <div className="shell py-6 sm:py-10 3xl:py-14">{children}</div>
-
-        <footer className="shell border-t border-hairline py-8 text-center">
-          <p className="label">
-            Themed after BlazeRush by Targem Games · Arthur is an original drawing
-          </p>
-        </footer>
       </main>
     </div>
   );
@@ -301,15 +260,6 @@ function SideNav({ items }: { items: NavItem[] }) {
           <span className="truncate">{item.label}</span>
         </NavLink>
       ))}
-
-      <div className="divider-neon my-3" />
-
-      <div className="mt-auto px-3 pb-2">
-        <div className="flex items-center gap-2 opacity-40">
-          <LayoutGrid size={13} />
-          <span className="label text-[0.5rem]">Lo-fi JSON backend</span>
-        </div>
-      </div>
     </nav>
   );
 }

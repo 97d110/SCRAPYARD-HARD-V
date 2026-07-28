@@ -1,4 +1,15 @@
-import { BadRequestException, Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -14,9 +25,16 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { CurrentUser, JwtAuthGuard } from '../auth/guards';
+import { AdminGuard, CurrentUser, JwtAuthGuard } from '../auth/guards';
 import { ScoresService } from './scores.service';
-import type { PeriodKind, PublicUser, RecordGameResponse, Scoreboard } from '@scrapyard/shared';
+import type {
+  DeleteGameResponse,
+  GamesPage,
+  PeriodKind,
+  PublicUser,
+  RecordGameResponse,
+  Scoreboard,
+} from '@scrapyard/shared';
 import { dayKey, monthKey, periodKindOf } from '../common/period.util';
 
 export class GameResultDto {
@@ -128,5 +146,43 @@ export class ScoresController {
       },
       boards: { allTime, monthly, daily },
     };
+  }
+}
+
+/**
+ * Admin: browse and delete recorded games.
+ *
+ * Separate controller from `ScoresController`, same reasoning as
+ * `AdminUsersController` — the guard is on the class, not repeated per method,
+ * so a new handler here can't accidentally ship without it.
+ */
+@Controller('admin/games')
+@UseGuards(JwtAuthGuard, AdminGuard)
+export class AdminGamesController {
+  constructor(private readonly scores: ScoresService) {}
+
+  /** Newest-first race log, optionally scoped to one day. Cursor-paginated. */
+  @Get()
+  async list(
+    @Query('limit') limit?: string,
+    @Query('before') before?: string,
+    @Query('day') day?: string,
+  ): Promise<GamesPage> {
+    return this.scores.listGames({
+      limit: limit ? Number(limit) : undefined,
+      before,
+      day,
+    });
+  }
+
+  /**
+   * Delete a game. Boards/achievements need no cascade — they're aggregated
+   * fresh on read — but same-day revenge tags are write-time-resolved, so the
+   * rest of that day gets recomputed. See `ScoresService.deleteGame`.
+   */
+  @Delete(':id')
+  @HttpCode(200)
+  async remove(@Param('id') id: string): Promise<DeleteGameResponse> {
+    return this.scores.deleteGame(id);
   }
 }

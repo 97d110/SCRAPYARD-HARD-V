@@ -183,9 +183,11 @@ export class ContentService {
   ): Promise<ContentTypeDescriptor[]> {
     const puns = await this.readPuns();
     const users = await this.mongo.users();
-    const [crewCount, unclaimedCount] = await Promise.all([
+    const games = await this.mongo.games();
+    const [crewCount, unclaimedCount, gameCount] = await Promise.all([
       users.countDocuments(),
       users.countDocuments({ googleId: { $exists: false } }),
+      games.countDocuments(),
     ]);
     return [
       {
@@ -231,6 +233,21 @@ export class ContentService {
         itemCount: crewCount,
         kind: 'content',
         unit: unclaimedCount > 0 ? `${unclaimedCount} unclaimed` : 'racers',
+      },
+      {
+        id: 'games',
+        label: 'Race Log',
+        description:
+          'Every recorded race, newest first. Delete a bad entry and same-day revenge tags recompute automatically.',
+        icon: 'flag',
+        keywords: [
+          'game', 'games', 'race', 'races', 'log', 'history', 'delete', 'undo',
+          'kills', 'revenge', 'results',
+        ],
+        editable: true,
+        itemCount: gameCount,
+        kind: 'content',
+        unit: 'races',
       },
       {
         id: 'metrics',

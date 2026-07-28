@@ -4,9 +4,11 @@ import type {
   AchievementTier,
   ContentTypeDescriptor,
   CurrentBoards,
+  DeleteGameResponse,
   ExportSummary,
   FormulaTerm,
   GameResultInput,
+  GamesPage,
   KillEventInput,
   MetricAggregation,
   MetricDef,
@@ -179,6 +181,24 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ ids }),
       }),
+
+    // --- race log -----------------------------------------------------------
+    games: {
+      /** Newest-first, optionally scoped to one day. `before` is a cursor, not an offset. */
+      list: (params: { limit?: number; before?: string; day?: string } = {}) => {
+        const query = new URLSearchParams();
+        if (params.limit) query.set('limit', String(params.limit));
+        if (params.before) query.set('before', params.before);
+        if (params.day) query.set('day', params.day);
+        const suffix = query.toString() ? `?${query.toString()}` : '';
+        return request<GamesPage>(`/admin/games${suffix}`);
+      },
+      /** Deletes the game and recomputes same-day revenge tags server-side. */
+      remove: (id: string) =>
+        request<DeleteGameResponse>(`/admin/games/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+        }),
+    },
 
     // --- metrics registry -------------------------------------------------
     metrics: {

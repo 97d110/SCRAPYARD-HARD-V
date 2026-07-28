@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArthurShip } from './arthur/ArthurShip';
+import { ArthurShipFx } from './arthur/ArthurShipFx';
 import type { Pun } from '@scrapyard/shared';
 
 /**
@@ -204,9 +204,9 @@ export function PunTicker({ puns, speed = 90, holdMs = 5000 }: PunTickerProps) {
           <span className="whitespace-nowrap px-5 font-body text-[0.78rem] font-medium tracking-wide text-[#cfd8ff] sm:text-sm 3xl:text-base">
             {current.text}
           </span>
-          {/* Arthur rides along behind each pun, spinning. */}
+          {/* Arthur rides along behind each pun. */}
           <span className="grid shrink-0 place-items-center px-2" aria-hidden="true">
-            <ArthurShip size={34} spin accent={accent} />
+            <ArthurShipFx size={34} accent={accent} />
           </span>
         </div>
 

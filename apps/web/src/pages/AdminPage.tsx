@@ -1,12 +1,23 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from 'react';
 import {
   ArrowLeft,
+  Calendar,
   Check,
   ChevronDown,
   ChevronUp,
   Download,
   Eye,
   EyeOff,
+  Flag,
+  GripVertical,
   Loader2,
   Lock,
   Megaphone,
@@ -32,7 +43,7 @@ import {
   type UpdateRuleInput,
 } from '../lib/api';
 import { useApp } from '../state/AppStore';
-import { ArthurShip } from '../components/arthur/ArthurShip';
+import { ArthurShipFx } from '../components/arthur/ArthurShipFx';
 import {
   Avatar,
   ErrorPlate,
@@ -48,6 +59,7 @@ import type {
   AchievementTier,
   ContentTypeDescriptor,
   FormulaTerm,
+  GameEntry,
   MetricAggregation,
   MetricDef,
   PublicUser,
@@ -62,6 +74,7 @@ const ICONS: Record<string, LucideIcon> = {
   palette: Palette,
   download: Download,
   'sliders-horizontal': SlidersHorizontal,
+  flag: Flag,
 };
 
 const ACCENTS: Record<string, string> = {
@@ -72,6 +85,7 @@ const ACCENTS: Record<string, string> = {
   metrics: '#7DF9FF',
   racers: '#00E5FF',
   theme: '#7C5CFF',
+  games: '#00FFA3',
 };
 
 /**
@@ -132,6 +146,9 @@ export function AdminPage() {
   if (openType === 'achievements') {
     return <AchievementsEditor onBack={() => setOpenType(null)} />;
   }
+  if (openType === 'games') {
+    return <GamesEditor onBack={() => setOpenType(null)} />;
+  }
   if (openType) {
     const type = types.find((candidate) => candidate.id === openType);
     return (
@@ -157,7 +174,7 @@ export function AdminPage() {
         </div>
         <div className="hidden opacity-60 sm:block">
           <div className="animate-hover">
-            <ArthurShip size={110} accent="#7C5CFF" />
+            <ArthurShipFx size={110} accent="#7C5CFF" />
           </div>
         </div>
       </div>
@@ -411,6 +428,9 @@ function PunsEditor({ onBack }: { onBack: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const dragPointerId = useRef<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -453,6 +473,10 @@ function PunsEditor({ onBack }: { onBack: () => void }) {
     if (await run(() => api.admin.updatePun(id, { text: editingText }))) setEditingId(null);
   };
 
+  const persistOrder = (list: Pun[]) => {
+    void run(() => api.admin.reorderPuns(list.map((pun) => pun.id)));
+  };
+
   const move = (index: number, direction: -1 | 1) => {
     if (!puns) return;
     const target = index + direction;
@@ -460,7 +484,65 @@ function PunsEditor({ onBack }: { onBack: () => void }) {
     const next = [...puns];
     [next[index], next[target]] = [next[target], next[index]];
     setPuns(next);
-    void run(() => api.admin.reorderPuns(next.map((pun) => pun.id)));
+    persistOrder(next);
+  };
+
+  /*
+   * Dragging moves the item in local state on every row it crosses (smooth,
+   * no network chatter mid-drag) and persists once, on release — one request
+   * with the final order rather than one per row crossed.
+   */
+  const reorderLocal = (from: number, to: number) => {
+    setPuns((current) => {
+      if (!current || from === to) return current;
+      const next = [...current];
+      const [item] = next.splice(from, 1);
+      next.splice(to, 0, item);
+      return next;
+    });
+  };
+
+  const beginDrag = (index: number, event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (busy) return;
+    event.preventDefault();
+    dragPointerId.current = event.pointerId;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDragIndex(index);
+  };
+
+  /** Finds which row's midpoint the pointer has crossed, and moves the dragged row there. */
+  const dragOverMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (dragIndex === null || !listRef.current) return;
+    const rows = Array.from(listRef.current.children) as HTMLElement[];
+    if (rows.length === 0) return;
+
+    const pointerY = event.clientY;
+    let target = rows.length - 1;
+    for (let i = 0; i < rows.length; i += 1) {
+      const rect = rows[i].getBoundingClientRect();
+      if (pointerY < rect.top + rect.height / 2) {
+        target = i;
+        break;
+      }
+    }
+
+    if (target !== dragIndex) {
+      reorderLocal(dragIndex, target);
+      setDragIndex(target);
+    }
+  };
+
+  const endDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (dragPointerId.current !== null) {
+      try {
+        event.currentTarget.releasePointerCapture(dragPointerId.current);
+      } catch {
+        // Already released — fine.
+      }
+    }
+    dragPointerId.current = null;
+    setDragIndex(null);
+    if (puns) persistOrder(puns);
   };
 
   if (!puns) return <LoadingRig label="Loading puns" />;
@@ -522,15 +604,28 @@ function PunsEditor({ onBack }: { onBack: () => void }) {
       )}
 
       {/* List. */}
-      <Panel accent="#00E5FF" className="divide-y divide-hairline/60 overflow-hidden">
+      <Panel accent="#00E5FF" ref={listRef} className="divide-y divide-hairline/60 overflow-hidden">
         {puns.map((pun, index) => (
           <div
             key={pun.id}
             className={`flex items-center gap-3 px-3 py-2.5 transition-colors sm:px-4 ${
               pun.enabled ? '' : 'opacity-45'
-            }`}
+            } ${dragIndex === index ? 'relative z-10 scale-[1.01] bg-white/[0.04] shadow-lg' : ''}`}
           >
-            {/* Reorder. */}
+            {/* Drag to reorder anywhere, or nudge one step with the arrows. */}
+            <button
+              className="shrink-0 cursor-grab touch-none px-1 text-[var(--text-faint)] transition hover:text-plasma active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-20"
+              disabled={busy}
+              onPointerDown={(event) => beginDrag(index, event)}
+              onPointerMove={dragOverMove}
+              onPointerUp={endDrag}
+              onPointerCancel={endDrag}
+              aria-label="Drag to reorder"
+              title="Drag to reorder"
+            >
+              <GripVertical size={15} />
+            </button>
+
             <span className="flex shrink-0 flex-col">
               <button
                 className="px-1 text-[var(--text-faint)] transition hover:text-plasma disabled:opacity-20"
@@ -1425,6 +1520,217 @@ function AchievementsEditor({ onBack }: { onBack: () => void }) {
           </div>
         ))}
       </Panel>
+    </div>
+  );
+}
+
+/**
+ * Race log editor. Newest-first, optionally scoped to one day, with a
+ * "load more" cursor rather than page numbers — stable while new races keep
+ * landing on page 1 during a live session.
+ *
+ * Deleting is the one destructive action in the whole admin area that isn't
+ * "undo a mistake before it matters" (crew removal only works on an unclaimed,
+ * winless seat). Boards and achievements need no cascade — they're aggregated
+ * fresh from `games` on every read — but the kill log's `revenge` flags are
+ * resolved once, at write time, against that day's grudge ledger. The server
+ * recomputes the rest of that day after a delete; the confirm dialog says so
+ * up front rather than surprising the admin after the fact.
+ */
+function GamesEditor({ onBack }: { onBack: () => void }) {
+  const { users } = useApp();
+  const [games, setGames] = useState<GameEntry[] | null>(null);
+  const [nextBefore, setNextBefore] = useState<string | undefined>(undefined);
+  const [day, setDay] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lastResult, setLastResult] = useState<string | null>(null);
+
+  const usersById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
+
+  const load = useCallback(async (scope: string) => {
+    setError(null);
+    setGames(null);
+    try {
+      const page = await api.admin.games.list({ day: scope || undefined });
+      setGames(page.games);
+      setNextBefore(page.nextBefore);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not load the race log');
+      setGames([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load(day);
+  }, [load, day]);
+
+  const loadMore = async () => {
+    if (!nextBefore) return;
+    setLoadingMore(true);
+    try {
+      const page = await api.admin.games.list({ day: day || undefined, before: nextBefore });
+      setGames((current) => [...(current ?? []), ...page.games]);
+      setNextBefore(page.nextBefore);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not load more races');
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  const remove = async (game: GameEntry) => {
+    setBusy(true);
+    setError(null);
+    setLastResult(null);
+    try {
+      const result = await api.admin.games.remove(game.id);
+      setLastResult(
+        result.recomputedGames > 0
+          ? `Deleted. ${result.recomputedGames} other race${result.recomputedGames === 1 ? '' : 's'} that day had revenge tags recomputed.`
+          : 'Deleted.',
+      );
+      await load(day);
+      window.setTimeout(() => setLastResult(null), 6000);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not delete that race');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const finisherLabel = (racerId: string) => usersById.get(racerId)?.displayName ?? 'Unknown racer';
+  const finisherAccent = (racerId: string) => usersById.get(racerId)?.accentColor ?? '#7C5CFF';
+
+  const confirmDelete = (game: GameEntry) => {
+    const when = new Date(game.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+    const field = game.results
+      .map((r) => `${r.place}. ${finisherLabel(r.racerId)}`)
+      .join('\n');
+    const revengeNote =
+      '\n\nAny later race that same day will have its revenge tags recomputed automatically.';
+    if (
+      window.confirm(`Delete this race — ${when}?\n\n${field}${revengeNote}\n\nThis cannot be undone.`)
+    ) {
+      void remove(game);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <EditorBack onBack={onBack} />
+
+      <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <Label>Race Log{games ? ` · ${games.length} loaded` : ''}</Label>
+          <h1 className="headline mt-1 text-3xl sm:text-5xl">Races</h1>
+          <p className="mt-2 max-w-xl text-sm text-[var(--text-dim)]">
+            Every recorded race, newest first. Deleting one removes it from every
+            board on the next load and corrects same-day revenge tags for
+            anything recorded later that day.
+          </p>
+        </div>
+
+        <label className="flex items-center gap-2 border border-hairline bg-white/[0.02] px-3 py-2">
+          <Calendar size={14} className="text-[var(--text-faint)]" />
+          <input
+            type="date"
+            className="bg-transparent font-mono text-[0.78rem] text-[var(--text)] outline-none [color-scheme:dark]"
+            value={day}
+            onChange={(event) => setDay(event.target.value)}
+          />
+          {day && (
+            <button
+              className="text-[var(--text-faint)] transition hover:text-white"
+              onClick={() => setDay('')}
+              aria-label="Clear day filter"
+            >
+              <X size={13} />
+            </button>
+          )}
+        </label>
+      </div>
+
+      {error && (
+        <p className="border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">{error}</p>
+      )}
+      {lastResult && (
+        <p className="flex items-center gap-2 border border-toxic/40 bg-toxic/10 px-3 py-2 text-xs text-toxic">
+          <Check size={13} /> {lastResult}
+        </p>
+      )}
+
+      {games === null ? (
+        <LoadingRig label="Loading the race log" />
+      ) : games.length === 0 ? (
+        <Panel className="p-10 text-center">
+          <p className="text-sm text-[var(--text-faint)]">
+            {day ? 'No races recorded that day.' : 'No races recorded yet.'}
+          </p>
+        </Panel>
+      ) : (
+        <>
+          <Panel accent={ACCENTS.games} className="divide-y divide-hairline/60 overflow-hidden">
+            {games.map((game) => {
+              const revenges = game.events.filter((e) => e.revenge).length;
+              return (
+                <div key={game.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                  <span className="w-[8.5rem] shrink-0 font-mono text-[0.68rem] text-[var(--text-faint)]">
+                    {new Date(game.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                  </span>
+
+                  <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+                    {game.results.map((r) => (
+                      <span key={r.racerId} className="flex items-center gap-1.5 text-[0.76rem]">
+                        <span className="font-mono text-[0.6rem] text-[var(--text-faint)]">
+                          P{r.place}
+                        </span>
+                        <span style={{ color: finisherAccent(r.racerId) }} className="font-semibold">
+                          {finisherLabel(r.racerId)}
+                        </span>
+                      </span>
+                    ))}
+                    {game.note && (
+                      <span className="truncate text-[0.68rem] italic text-[var(--text-faint)]">
+                        “{game.note}”
+                      </span>
+                    )}
+                  </span>
+
+                  <span className="shrink-0 font-mono text-[0.65rem] text-[var(--text-faint)]">
+                    {game.events.length} kill{game.events.length === 1 ? '' : 's'}
+                    {revenges > 0 ? ` · ${revenges} revenge` : ''}
+                  </span>
+
+                  <button
+                    className="shrink-0 p-1.5 text-[var(--text-dim)] transition hover:scale-110 hover:text-danger disabled:opacity-30"
+                    disabled={busy}
+                    onClick={() => confirmDelete(game)}
+                    aria-label="Delete race"
+                    title="Delete race"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              );
+            })}
+          </Panel>
+
+          {nextBefore && (
+            <div className="flex justify-center">
+              <button
+                className="flex items-center gap-2 border border-hairline px-4 py-2 font-display text-[0.62rem] font-bold uppercase tracking-[0.2em] text-[var(--text-dim)] transition hover:border-plasma/60 hover:text-white disabled:opacity-40"
+                disabled={loadingMore}
+                onClick={() => void loadMore()}
+              >
+                {loadingMore ? <Loader2 size={13} className="animate-spin" /> : <Flag size={13} />}
+                Load more
+              </button>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

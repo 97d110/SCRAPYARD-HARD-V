@@ -28,6 +28,27 @@ interface Finisher {
 /** Medal tint by finishing place (1-indexed). Beyond the podium goes faint. */
 const PLACE_COLOR = ['#FFB020', '#CFE3FF', '#FF8A3D', '#5b6688'];
 
+/**
+ * The scoring ground rules — mirrored from the server (`ScoresService.validate`)
+ * so the overlay can validate and preview them live, without waiting on a
+ * round trip. Kept in sync deliberately; if the server's numbers change, these
+ * must too.
+ */
+const DEFAULT_SCORE_BY_PLACE = [15, 10, 5, 0];
+const WINNER_MIN_SCORE = 15;
+
+/**
+ * What a finisher's score actually resolves to: blank/0 falls back to the
+ * standard purse for that place, and the winner's purse is never allowed
+ * below the minimum — silently topped up rather than flagged as an error.
+ */
+function effectiveScore(raw: string, place: number): number {
+  const typed = raw.trim() === '' ? 0 : Math.max(0, Number(raw) || 0);
+  let score = typed === 0 ? DEFAULT_SCORE_BY_PLACE[place - 1] ?? 0 : typed;
+  if (place === 1 && score < WINNER_MIN_SCORE) score = WINNER_MIN_SCORE;
+  return score;
+}
+
 export function AddScoreOverlay({
   open,
   users,
@@ -252,7 +273,36 @@ export function AddScoreOverlay({
     const n = Number(f.gameScore);
     return Number.isFinite(n) && n >= 0;
   });
-  const canSubmit = finishers.length >= 1 && finishers.length <= 4 && scoresValid;
+
+  // What actually gets submitted per finisher, after defaults + the winner
+  // floor — computed once so validation and submission never disagree.
+  const effectiveScores = useMemo(
+    () => finishers.map((f, i) => effectiveScore(f.gameScore, i + 1)),
+    [finishers],
+  );
+
+  /**
+   * Lower places must score the same or less than the place ahead of them —
+   * ties are fine, an increase isn't. Keyed by the *offending* (lower-placed)
+   * racer, since that's the row that needs fixing.
+   */
+  const scoreOrderIssues = useMemo(() => {
+    const issues = new Map<string, string>();
+    for (let i = 1; i < finishers.length; i += 1) {
+      if (effectiveScores[i] > effectiveScores[i - 1]) {
+        const below = usersById.get(finishers[i].racerId)?.displayName ?? 'This racer';
+        const above = usersById.get(finishers[i - 1].racerId)?.displayName ?? 'the place above';
+        issues.set(
+          finishers[i].racerId,
+          `${below} (P${i + 1}) can't outscore ${above} (P${i}) — lower places must score the same or less.`,
+        );
+      }
+    }
+    return issues;
+  }, [finishers, effectiveScores, usersById]);
+
+  const canSubmit =
+    finishers.length >= 1 && finishers.length <= 4 && scoresValid && scoreOrderIssues.size === 0;
 
   const addKill = () => {
     const ids = new Set(finishers.map((f) => f.racerId));
@@ -283,7 +333,7 @@ export function AddScoreOverlay({
       return {
         racerId: finisher.racerId,
         place: index + 1,
-        gameScore: Math.max(0, Number(finisher.gameScore) || 0),
+        gameScore: effectiveScores[index],
         stats,
       };
     });
@@ -493,11 +543,16 @@ export function AddScoreOverlay({
                       const user = usersById.get(finisher.racerId);
                       if (!user) return null;
                       const medal = PLACE_COLOR[Math.min(index, PLACE_COLOR.length - 1)];
+                      const scoreIssue = scoreOrderIssues.get(finisher.racerId);
                       return (
                         <div
                           key={finisher.racerId}
                           className={`border bg-white/[0.015] p-3 transition ${
-                            dragIndex === index ? 'border-plasma/60 opacity-50' : 'border-hairline'
+                            dragIndex === index
+                              ? 'border-plasma/60 opacity-50'
+                              : scoreIssue
+                                ? 'score-order-flicker border-danger/70'
+                                : 'border-hairline'
                           }`}
                           style={withGlow(user.accentColor)}
                         >
@@ -574,8 +629,10 @@ export function AddScoreOverlay({
                                 min={0}
                                 max={999}
                                 inputMode="numeric"
-                                className="field !w-[4.5rem] !px-2 !py-1.5 text-right font-mono text-sm"
-                                placeholder="0"
+                                className={`field !w-[4.5rem] !px-2 !py-1.5 text-right font-mono text-sm ${
+                                  scoreIssue ? '!border-danger/70' : ''
+                                }`}
+                                placeholder={String(DEFAULT_SCORE_BY_PLACE[index] ?? 0)}
                                 value={finisher.gameScore}
                                 disabled={phase !== 'idle'}
                                 onChange={(event) => setGameScore(finisher.racerId, event.target.value)}
@@ -732,6 +789,19 @@ export function AddScoreOverlay({
                   />
                 </div>
               </>
+            )}
+
+            {scoreOrderIssues.size > 0 && (
+              <div className="space-y-1.5">
+                {[...scoreOrderIssues.values()].map((message) => (
+                  <p
+                    key={message}
+                    className="border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger"
+                  >
+                    {message}
+                  </p>
+                ))}
+              </div>
             )}
 
             {error && (

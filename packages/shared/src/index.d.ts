@@ -156,6 +156,26 @@ export interface GameEntry {
   events: KillEvent[];
 }
 
+/** A page of games for the admin race log, newest first. */
+export interface GamesPage {
+  games: GameEntry[];
+  /** Pass as `before` to fetch the next page; absent once there's no more. */
+  nextBefore?: string;
+}
+
+/**
+ * Response from deleting a game. Boards/achievements need no cascade — they're
+ * aggregated fresh on read — but same-day revenge tags are resolved at write
+ * time, so removing a game can leave later-that-day games flagging a grudge
+ * that, from the ledger's perspective, never happened. `recomputedGames` is
+ * how many of that day's other games had their revenge tags corrected.
+ */
+export interface DeleteGameResponse {
+  deletedId: string;
+  dayKey: string;
+  recomputedGames: number;
+}
+
 /** One racer's slice of a race, for their profile timeline. */
 export interface GameParticipation {
   gameId: string;

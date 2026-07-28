@@ -478,3 +478,23 @@
 .hero-spark {
   animation: hero-spark-burst var(--dur, 5.5s) ease-out infinite;
 }
+
+/* ── Score-order violation: a dim flicker, not an alarm ─────────────────────
+ * Flags a race-entry row whose score breaks the "lower places score the same
+ * or less" rule. Deliberately low-key — this needs to be noticed while an
+ * admin's eye is on the grid, not screamed at across the room, so it eases
+ * between a faint and a slightly-brighter red rather than flashing solid.
+ */
+@keyframes score-order-flicker {
+  0%, 100% {
+    border-color: rgb(255 59 48 / 0.35);
+    box-shadow: 0 0 0 1px rgb(255 59 48 / 0.12), 0 0 14px -6px rgb(255 59 48 / 0.35);
+  }
+  50% {
+    border-color: rgb(255 59 48 / 0.8);
+    box-shadow: 0 0 0 1px rgb(255 59 48 / 0.3), 0 0 22px -4px rgb(255 59 48 / 0.7);
+  }
+}
+.score-order-flicker {
+  animation: score-order-flicker 1.6s ease-in-out infinite;
+}

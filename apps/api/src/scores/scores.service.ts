@@ -1,12 +1,14 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { MongoService, GameResultDoc, KillEventDoc } from '../database/mongo.service';
+import { MongoService, GameDoc, GameResultDoc, KillEventDoc } from '../database/mongo.service';
 import { ScoreboardRepository } from '../database/scoreboard.repository';
 import { UsersService } from '../users/users.service';
 import { MetricsService } from '../metrics/metrics.service';
 import type {
+  DeleteGameResponse,
   GameEntry,
   GameResultInput,
+  GamesPage,
   KillEventInput,
   PeriodKind,
   Scoreboard,
@@ -29,6 +31,19 @@ export interface RecordGameResult {
 const MAX_FIELD = 4;
 const MAX_SCORE = 999;
 const MAX_STAT = 99_999;
+
+/**
+ * The scoring ground rules, enforced server-side so no client can skip them:
+ *
+ *  - A blank/zero score falls back to the standard purse for that place.
+ *  - The winner's purse never drops below `WINNER_MIN_SCORE` — silently
+ *    topped up rather than rejected, whether it was left blank or typed low.
+ *  - Beyond that, scores must not increase further down the finishing
+ *    order (ties are fine) — that one *is* rejected, since silently
+ *    reshuffling someone's typed number would be guessing at their intent.
+ */
+const DEFAULT_SCORE_BY_PLACE: Record<number, number> = { 1: 15, 2: 10, 3: 5, 4: 0 };
+const WINNER_MIN_SCORE = 15;
 
 @Injectable()
 export class ScoresService {
@@ -151,9 +166,12 @@ export class ScoresService {
 
     const capturedIds = new Set((await this.metrics.registry()).captured.map((m) => m.id));
 
-    return input
+    const results = input
       .map((r) => {
-        const gameScore = this.clampInt(r.gameScore ?? 0, 0, MAX_SCORE, 'in-game score');
+        let gameScore = this.clampInt(r.gameScore ?? 0, 0, MAX_SCORE, 'in-game score');
+        if (gameScore === 0) gameScore = DEFAULT_SCORE_BY_PLACE[r.place] ?? 0;
+        if (r.place === 1 && gameScore < WINNER_MIN_SCORE) gameScore = WINNER_MIN_SCORE;
+
         const stats: Record<string, number> = {};
         for (const [key, raw] of Object.entries(r.stats ?? {})) {
           // Silently drop unknown metrics so an evolving metric list never
@@ -164,6 +182,17 @@ export class ScoresService {
         return { racerId: r.racerId, place: r.place, gameScore, stats };
       })
       .sort((a, b) => a.place - b.place);
+
+    // Scores must not climb back up further down the running order.
+    for (let i = 1; i < results.length; i += 1) {
+      if (results[i].gameScore > results[i - 1].gameScore) {
+        throw new BadRequestException(
+          `Place ${results[i].place}'s score can't beat place ${results[i - 1].place}'s`,
+        );
+      }
+    }
+
+    return results;
   }
 
   /**
@@ -219,5 +248,102 @@ export class ScoresService {
       ...months.map((key) => ({ kind: 'monthly' as const, key })),
       ...days.map((key) => ({ kind: 'daily' as const, key })),
     ];
+  }
+
+  /**
+   * Admin race log: newest-first, optionally scoped to one day, with a
+   * cursor (`before`, an ISO timestamp) rather than an offset — stable while
+   * new games keep landing on page 1.
+   */
+  async listGames(params: { limit?: number; before?: string; day?: string }): Promise<GamesPage> {
+    const limit = Math.min(Math.max(Math.trunc(params.limit ?? 20), 1), 100);
+    const games = await this.mongo.games();
+
+    const filter: Record<string, unknown> = {};
+    if (params.day) filter.dayKey = params.day;
+    if (params.before) {
+      const before = new Date(params.before);
+      if (!Number.isNaN(before.getTime())) filter.at = { $lt: before };
+    }
+
+    // Fetch one extra to know whether there's a next page without a second round trip.
+    const docs = await games
+      .find(filter)
+      .sort({ at: -1 })
+      .limit(limit + 1)
+      .toArray();
+
+    const page = docs.slice(0, limit);
+    const nextBefore = docs.length > limit ? page[page.length - 1].at.toISOString() : undefined;
+
+    return { games: page.map((doc) => this.toEntry(doc)), ...(nextBefore ? { nextBefore } : {}) };
+  }
+
+  /**
+   * Delete a game and, if needed, cascade.
+   *
+   * Boards and achievements need nothing — they're aggregated fresh from
+   * `games` on every read, so the deletion is already reflected on the next
+   * load. The one exception is the kill log's `revenge` flag: it's resolved
+   * once, at write time, against that day's grudge ledger seeded from
+   * *earlier* games. Removing a game can strand a later game's `revenge: true`
+   * pointing at a kill that, from the ledger's perspective, never happened.
+   *
+   * The fix is to replay the whole remaining day from an empty ledger and
+   * write back only the games whose flags actually changed. Replaying the
+   * whole day (not just the games after the deleted one) is deliberately the
+   * simplest correct option: games before the deletion point get an identical
+   * ledger state back, so they're no-ops, and there's no separate "only
+   * after X" bookkeeping to get wrong.
+   */
+  async deleteGame(id: string): Promise<DeleteGameResponse> {
+    const games = await this.mongo.games();
+    const game = await games.findOne({ _id: id });
+    if (!game) throw new NotFoundException('No such game');
+
+    await games.deleteOne({ _id: id });
+
+    const remaining = await games
+      .find({ dayKey: game.dayKey })
+      .sort({ at: 1 })
+      .toArray();
+
+    const pairs = remaining.flatMap((g) =>
+      g.events.map((e) => ({ killerId: e.killerId, victimId: e.victimId })),
+    );
+    const retagged = tagRevengeSameDay([], pairs);
+
+    let cursor = 0;
+    let recomputedGames = 0;
+    for (const g of remaining) {
+      const slice = retagged.slice(cursor, cursor + g.events.length);
+      cursor += g.events.length;
+
+      const changed = slice.some((event, i) => event.revenge !== g.events[i]?.revenge);
+      if (changed) {
+        await games.updateOne({ _id: g._id }, { $set: { events: slice } });
+        recomputedGames += 1;
+      }
+    }
+
+    this.logger.log(
+      `Game ${id} deleted (${game.dayKey}, ${game.results.length} finishers)` +
+        `${recomputedGames ? ` — ${recomputedGames} later game(s) that day recomputed for revenge` : ''}`,
+    );
+
+    return { deletedId: id, dayKey: game.dayKey, recomputedGames };
+  }
+
+  private toEntry(doc: GameDoc): GameEntry {
+    return {
+      id: doc._id,
+      at: doc.at.toISOString(),
+      monthKey: doc.monthKey,
+      dayKey: doc.dayKey,
+      awardedBy: doc.awardedBy,
+      ...(doc.note ? { note: doc.note } : {}),
+      results: doc.results,
+      events: doc.events,
+    };
   }
 }
