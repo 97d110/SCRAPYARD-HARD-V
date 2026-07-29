@@ -143,7 +143,7 @@ export function UserPage() {
             <NeonButton
               variant={editing ? 'ghost' : 'primary'}
               accent={accent}
-              className="shrink-0"
+              className={`shrink-0 ${editing ? '' : 'cta-nudge'}`}
               onClick={() => setEditing((value) => !value)}
             >
               {editing ? <X size={15} /> : <Pencil size={15} />}
@@ -902,6 +902,7 @@ function ProfileEditor({
               variant="primary"
               accent={accentColor}
               ring
+              className="cta-nudge"
               disabled={saving || displayName.trim().length < 2}
               onClick={() => void save()}
             >

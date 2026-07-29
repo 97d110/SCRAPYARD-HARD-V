@@ -51,7 +51,7 @@ export const NeonButton = forwardRef<HTMLButtonElement, NeonButtonProps>(functio
   return (
     <button
       ref={ref}
-      className={`btn btn-${variant} ${ring ? 'ring-spin' : ''} ${className}`}
+      className={`btn ${variant === 'primary' ? 'btn-primary' : 'btn-ghost'} ${ring ? 'ring-spin' : ''} ${className}`}
       style={{ ...withGlow(accent), ...style }}
       {...rest}
     >
