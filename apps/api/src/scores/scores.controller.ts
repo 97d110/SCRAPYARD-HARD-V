@@ -28,6 +28,7 @@ import { Type } from 'class-transformer';
 import { AdminGuard, CurrentUser, JwtAuthGuard } from '../auth/guards';
 import { ClientId } from '../live/client-id.decorator';
 import { LiveGateway } from '../live/live.gateway';
+import { PushService } from '../push/push.service';
 import { ScoresService } from './scores.service';
 import type {
   DeleteGameResponse,
@@ -89,6 +90,7 @@ export class ScoresController {
   constructor(
     private readonly scores: ScoresService,
     private readonly live: LiveGateway,
+    private readonly push: PushService,
   ) {}
 
   /**
@@ -155,6 +157,14 @@ export class ScoresController {
      * below already, so it drops the echo on `origin`.
      */
     this.live.broadcast({ type: 'game:recorded', origin, gameId: result.game.id, winner });
+
+    // Fire-and-forget: a push failure, or the feature being unconfigured,
+    // must never affect the response a racer is waiting on.
+    void this.push.notifyRaceRecorded({
+      winnerName: winner.displayName,
+      finishers: result.game.results.length,
+      note: result.game.note,
+    });
 
     return {
       game: { id: result.game.id, at: result.game.at },

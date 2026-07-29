@@ -45,10 +45,10 @@ export function MainPage() {
           variant="primary"
           ring
           accent="#FF6A00"
-          className="cta-nudge shrink-0 !py-3.5 !text-xs lg:!text-sm"
+          className="cta-nudge shrink-0"
           onClick={() => setOverlayOpen(true)}
         >
-          <Plus size={16} strokeWidth={3} />
+          <Plus size={18} strokeWidth={3} />
           Record Race
         </NeonButton>
       </div>

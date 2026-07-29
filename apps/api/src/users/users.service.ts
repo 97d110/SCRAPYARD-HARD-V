@@ -473,7 +473,7 @@ export class UsersService {
 
   toPublic(
     user: UserRecord,
-    scores?: { allTime: number; month: number; day: number },
+    scores?: { allTime: number; month: number; day: number; races: number; lastAt: string | null },
   ): PublicUser {
     const month = monthKey();
     const day = dayKey();
@@ -494,6 +494,8 @@ export class UsersService {
         allTime: scores?.allTime ?? 0,
         monthly: { [month]: scores?.month ?? 0 },
         daily: { [day]: scores?.day ?? 0 },
+        races: scores?.races ?? 0,
+        lastRaceAt: scores?.lastAt ?? null,
       },
     };
   }

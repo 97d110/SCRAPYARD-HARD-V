@@ -15,6 +15,7 @@ import type {
   ProfileBundle,
   PublicUser,
   Pun,
+  PushSubscriptionInput,
   RecordGameResponse,
   Scoreboard,
 } from '@scrapyard/shared';
@@ -172,6 +173,16 @@ export const api = {
 
   // --- content ------------------------------------------------------------
   puns: () => request<Pun[]>('/content/puns'),
+
+  // --- push notifications ---------------------------------------------------
+  push: {
+    /** Null when the server has no VAPID keys configured. */
+    publicKey: () => request<{ publicKey: string | null }>('/push/public-key'),
+    subscribe: (subscription: PushSubscriptionInput) =>
+      request<void>('/push/subscribe', { method: 'POST', body: JSON.stringify(subscription) }),
+    unsubscribe: (endpoint: string) =>
+      request<void>('/push/subscribe', { method: 'DELETE', body: JSON.stringify({ endpoint }) }),
+  },
 
   // --- admin --------------------------------------------------------------
   admin: {

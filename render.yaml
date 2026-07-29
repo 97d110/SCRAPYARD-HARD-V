@@ -84,6 +84,17 @@ services:
       - key: ADMIN_EMAILS
         value: amit@cytactic.com
 
+      # --- Push notifications (you supply, optional) ------------------------
+      # Entirely optional: leave unset and the feature just stays off. A
+      # matched keypair, not two independent secrets — generate both together:
+      #   npx web-push generate-vapid-keys
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_SUBJECT
+        value: mailto:amit@cytactic.com
+
       # --- Behaviour -------------------------------------------------------
       - key: SCRAPYARD_TIMEZONE
         value: Asia/Jerusalem

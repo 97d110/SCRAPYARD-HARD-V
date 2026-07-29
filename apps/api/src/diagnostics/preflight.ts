@@ -409,6 +409,33 @@ async function checkRedirectUri(): Promise<Check> {
 }
 
 /**
+ * Push notifications are optional infrastructure, not a required one — unlike
+ * the checks above, an unset VAPID pair is not a failure, just a feature
+ * that's off. This exists so "why doesn't the notification toggle show up"
+ * has an answer in the same place as every other configuration question.
+ */
+function checkPush(): Check {
+  const publicKey = process.env.VAPID_PUBLIC_KEY;
+  const privateKey = process.env.VAPID_PRIVATE_KEY;
+  if (!publicKey && !privateKey) {
+    return {
+      name: 'push',
+      status: 'skip',
+      detail: 'VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY not set — push notifications are off',
+    };
+  }
+  if (!publicKey || !privateKey) {
+    return {
+      name: 'push',
+      status: 'fail',
+      detail: 'only one of VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY is set',
+      hint: "They're a matched keypair — set both, or neither: npx web-push generate-vapid-keys",
+    };
+  }
+  return { name: 'push', status: 'pass', detail: `configured (${fingerprint(publicKey)})` };
+}
+
+/**
  * What preflight deliberately does NOT test, so nobody reads a green run as a
  * broader guarantee than it is:
  *
@@ -430,7 +457,7 @@ export async function runPreflight(): Promise<Check[]> {
     checkGoogleClient(),
     checkRedirectUri(),
   ]);
-  return [...checks, mongo, reachable, client, redirect];
+  return [...checks, mongo, reachable, client, redirect, checkPush()];
 }
 
 const GLYPH: Record<Status, string> = { pass: '✓', fail: '✗', warn: '!', skip: '·' };

@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Calendar, Crosshair, Flame, LogOut, Pencil, RotateCcw, Save, Skull, Swords, Upload, X } from 'lucide-react';
+import { Bell, Calendar, Crosshair, Flame, LogOut, Pencil, RotateCcw, Save, Skull, Swords, Upload, X } from 'lucide-react';
 import { api } from '../lib/api';
+import {
+  getPushSubscription,
+  isPushSupported,
+  subscribeToPush,
+  unsubscribeFromPush,
+} from '../lib/push';
 import { useApp } from '../state/AppStore';
 import { useLiveEvent } from '../state/useLiveEvent';
 import { AchievementGrid } from '../components/AchievementGrid';
@@ -147,6 +153,10 @@ export function UserPage() {
         </div>
       </Panel>
 
+      {/* A device setting, not a profile field — visible without opening the
+          editor, and it hides itself entirely on a browser that can't do this. */}
+      {isMe && <NotificationsPanel accent={accent} />}
+
       {/* Editor. */}
       {isMe && editing && (
         <ProfileEditor
@@ -229,7 +239,7 @@ export function UserPage() {
                   className="stat-number mt-1 text-xl leading-none text-white"
                   style={{ textShadow: `0 0 16px ${accent}` }}
                 >
-                  {formatMetricValue(totals[column.id] ?? 0)}
+                  {formatMetricValue(totals[column.id] ?? 0, column.id)}
                 </p>
                 {column.unit && (
                   <p className="mt-0.5 truncate text-[0.55rem] text-[var(--text-faint)]">
@@ -298,7 +308,7 @@ export function UserPage() {
                       <StatChip
                         key={column.id}
                         label={column.label.toLowerCase()}
-                        value={formatMetricValue(game.metrics[column.id] ?? 0)}
+                        value={formatMetricValue(game.metrics[column.id] ?? 0, column.id)}
                         accent={accent}
                       />
                     ))}
@@ -509,9 +519,14 @@ function StatChip({ label, value, accent }: { label: string; value: string; acce
   );
 }
 
-/** Integers as-is; averaged metrics (avgPlace) to a single decimal. */
-function formatMetricValue(value: number): string {
+/**
+ * Integers as-is. `avgPlace` always floors to a whole place (1.5 → 1, never
+ * shown as a decimal) — any other non-integer metric (e.g. a formula) still
+ * gets a single decimal.
+ */
+function formatMetricValue(value: number, metricId?: string): string {
   if (!Number.isFinite(value)) return '0';
+  if (metricId === 'avgPlace') return String(Math.floor(value));
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
@@ -595,6 +610,101 @@ function ActivityStrip({
 }
 
 /** Profile editor — own page only. */
+/**
+ * Push notifications, opted into (or out of) with a single toggle.
+ *
+ * Deliberately per-device, not per-account: the toggle reflects whether *this*
+ * browser currently holds a subscription, and turning it off only ever
+ * unsubscribes this browser. That's how Web Push works everywhere — there is
+ * no server-side "account preference" to keep in sync with it, so this
+ * component doesn't invent one.
+ */
+function NotificationsPanel({ accent }: { accent: string }) {
+  const [supported] = useState(() => isPushSupported());
+  const [checked, setChecked] = useState(false);
+  const [subscribed, setSubscribed] = useState(false);
+  const [permission, setPermission] = useState<NotificationPermission>(
+    typeof Notification !== 'undefined' ? Notification.permission : 'default',
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!supported) {
+      setChecked(true);
+      return;
+    }
+    let live = true;
+    void getPushSubscription().then((subscription) => {
+      if (!live) return;
+      setSubscribed(subscription !== null);
+      setChecked(true);
+    });
+    return () => {
+      live = false;
+    };
+  }, [supported]);
+
+  const toggle = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (subscribed) {
+        await unsubscribeFromPush();
+        setSubscribed(false);
+      } else {
+        await subscribeToPush();
+        setSubscribed(true);
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not update notifications');
+    } finally {
+      setPermission(typeof Notification !== 'undefined' ? Notification.permission : 'default');
+      setBusy(false);
+    }
+  };
+
+  // Not supported (most non-installed iOS Safari) or still checking — a
+  // silent no-op is better than a toggle that would just error on first tap.
+  if (!supported || !checked) return null;
+
+  const denied = permission === 'denied';
+
+  return (
+    <Panel accent={accent} className="flex flex-wrap items-center justify-between gap-4 p-5">
+      <div className="min-w-0 max-w-md">
+        <Label>
+          <span className="inline-flex items-center gap-1.5">
+            <Bell size={10} style={{ color: accent }} /> Push notifications
+          </span>
+        </Label>
+        <p className="mt-1.5 text-xs text-[var(--text-dim)]">
+          {denied
+            ? 'Blocked in this browser — re-enable notifications in its site settings to turn this back on.'
+            : 'Get a ping on this device whenever a race is recorded.'}
+        </p>
+        {error && <p className="mt-1.5 text-xs text-danger">{error}</p>}
+      </div>
+
+      <button
+        type="button"
+        role="switch"
+        aria-checked={subscribed}
+        aria-label="Push notifications"
+        disabled={busy || denied}
+        onClick={() => void toggle()}
+        className="relative h-6 w-11 shrink-0 rounded-full border border-hairline transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+        style={{ background: subscribed ? accent : 'rgb(255 255 255 / 0.06)' }}
+      >
+        <span
+          className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform"
+          style={{ transform: `translateX(${subscribed ? '22px' : '2px'})` }}
+        />
+      </button>
+    </Panel>
+  );
+}
+
 function ProfileEditor({
   user,
   onSaved,

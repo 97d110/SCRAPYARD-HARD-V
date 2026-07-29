@@ -1,17 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown, ChevronUp, GripVertical, Plus, Search, Skull, Trophy, X } from 'lucide-react';
-import { Avatar, Label, Panel, withGlow } from './ui/primitives';
+import { Check, ChevronDown, ChevronUp, Crown, GripVertical, Plus, Search, Skull, Trophy, X } from 'lucide-react';
+import { Avatar, Label, NeonButton, Panel, withGlow } from './ui/primitives';
 import { api } from '../lib/api';
 import type { GameResultInput, KillEventInput, MetricDef, PublicUser } from '@scrapyard/shared';
 
 /**
- * The race-entry overlay — a full-screen, two-pane workspace.
+ * The race-entry overlay.
  *
- *   left   the racer picker (search + roster). On mobile it collapses so the
- *          crew can pick the field, fold it away, and focus on the numbers.
- *   right  the race itself: the running order (drag to reorder → that's the
- *          placement), per-racer score and captured stats, the kill log, note.
+ *   desktop  a two-pane workspace, everything visible at once: racer picker on
+ *            the left, the grid + kill log + note on the right.
+ *   mobile   a three-step wizard — racers, then the grid, then the optional
+ *            extras — because all of that at once on a phone is exactly what
+ *            crews were tripping over. Each step is full-screen with one job,
+ *            and a sticky footer carries you to the next.
  *
  * A winner alone is a valid race; everything past first place is optional.
  * Submit still puts on the full show and hands off to Arthur's flyby.
@@ -49,6 +51,35 @@ function effectiveScore(raw: string, place: number): number {
   return score;
 }
 
+/** Matches Tailwind's `lg` breakpoint — the same one the rest of the app treats as "desktop". */
+const DESKTOP_QUERY = '(min-width: 1024px)';
+
+/**
+ * Desktop gets the simultaneous two-pane layout; anything narrower gets the
+ * step wizard. A media query rather than a CSS-only show/hide split, because
+ * the two layouts don't just restyle the same markup — mobile shows one
+ * step's content at a time, so only one tree can be mounted, not two with one
+ * hidden (which would mean two `<input>`s fighting over one drag ref).
+ */
+function useIsDesktop(): boolean {
+  const [isDesktop, setIsDesktop] = useState(() =>
+    typeof window === 'undefined' ? true : window.matchMedia(DESKTOP_QUERY).matches,
+  );
+
+  useEffect(() => {
+    const query = window.matchMedia(DESKTOP_QUERY);
+    setIsDesktop(query.matches);
+    const onChange = (event: MediaQueryListEvent) => setIsDesktop(event.matches);
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
+
+  return isDesktop;
+}
+
+type Step = 'racers' | 'grid' | 'extra';
+const STEPS: Step[] = ['racers', 'grid', 'extra'];
+
 export function AddScoreOverlay({
   open,
   users,
@@ -61,6 +92,7 @@ export function AddScoreOverlay({
   /** Resolve to launch the celebration; reject to show the error. */
   onSubmit: (results: GameResultInput[], events: KillEventInput[], note?: string) => Promise<unknown>;
 }) {
+  const isDesktop = useIsDesktop();
   const [query, setQuery] = useState('');
   const [finishers, setFinishers] = useState<Finisher[]>([]);
   const [note, setNote] = useState('');
@@ -72,10 +104,9 @@ export function AddScoreOverlay({
   const [kills, setKills] = useState<KillEventInput[]>([]);
   const [killer, setKiller] = useState('');
   const [victim, setVictim] = useState('');
-  // Mobile: the racer picker collapses once the field is chosen.
-  const [pickerOpen, setPickerOpen] = useState(true);
-  // Mobile: the kill log is optional, so it stays folded away until wanted.
-  const [killsOpen, setKillsOpen] = useState(false);
+  // Mobile only: which step of the wizard is showing. Irrelevant on desktop,
+  // where every section is visible at once.
+  const [step, setStep] = useState<Step>('racers');
   // Plays the collapse animation before the parent unmounts us.
   const [closing, setClosing] = useState(false);
   // The finisher row currently being dragged, for reorder + visual feedback.
@@ -106,8 +137,7 @@ export function AddScoreOverlay({
     setKills([]);
     setKiller('');
     setVictim('');
-    setPickerOpen(true);
-    setKillsOpen(false);
+    setStep('racers');
     setDragIndex(null);
     setClosing(false);
     const timer = window.setTimeout(() => searchRef.current?.focus(), 220);
@@ -159,9 +189,20 @@ export function AddScoreOverlay({
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    const sorted = [...users].sort(
-      (a, b) => b.scores.allTime - a.scores.allTime || a.displayName.localeCompare(b.displayName),
-    );
+    // Last race → races total → wins → name. Recency-first: who's actually
+    // likely still at the table beats who's historically best, which is what
+    // matters when you're picking racers for the race that just happened.
+    // Racers who've never raced have no `lastRaceAt` and sink to the bottom.
+    const sorted = [...users].sort((a, b) => {
+      const aLast = a.scores.lastRaceAt ? Date.parse(a.scores.lastRaceAt) : -Infinity;
+      const bLast = b.scores.lastRaceAt ? Date.parse(b.scores.lastRaceAt) : -Infinity;
+      return (
+        bLast - aLast ||
+        b.scores.races - a.scores.races ||
+        b.scores.allTime - a.scores.allTime ||
+        a.displayName.localeCompare(b.displayName)
+      );
+    });
     if (!needle) return sorted;
     return sorted.filter(
       (user) =>
@@ -301,8 +342,11 @@ export function AddScoreOverlay({
     return issues;
   }, [finishers, effectiveScores, usersById]);
 
-  const canSubmit =
-    finishers.length >= 1 && finishers.length <= 4 && scoresValid && scoreOrderIssues.size === 0;
+  // Step 1 → 2: at least a winner. Step 2 → 3: the grid has to be valid —
+  // there's no point reaching the kill log with a broken score order.
+  const canProceedPastRacers = finishers.length >= 1;
+  const canProceedPastGrid = scoresValid && scoreOrderIssues.size === 0;
+  const canSubmit = canProceedPastRacers && finishers.length <= 4 && canProceedPastGrid;
 
   const addKill = () => {
     const ids = new Set(finishers.map((f) => f.racerId));
@@ -355,6 +399,372 @@ export function AddScoreOverlay({
 
   if (!open || typeof document === 'undefined') return null;
 
+  // --- Shared section content — built once, placed differently by layout ----
+
+  const racerPickerFields = (
+    <>
+      {/* Search. */}
+      <div className="relative shrink-0">
+        <Search
+          size={16}
+          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-faint)]"
+        />
+        <input
+          ref={searchRef}
+          className="field !pl-10"
+          placeholder={
+            finishers.length >= 4
+              ? 'Grid full — remove a car to swap one in'
+              : 'Name, email or ride…'
+          }
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          disabled={phase !== 'idle'}
+        />
+      </div>
+
+      {/* Roster. */}
+      <div
+        className="no-scrollbar mt-3 flex-1 overflow-y-auto pr-1"
+        style={{ scrollbarGutter: 'stable' }}
+      >
+        {filtered.length === 0 ? (
+          <p className="py-10 text-center text-sm text-[var(--text-faint)]">
+            Nobody matches “{query}”.
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 gap-2">
+            {filtered.map((user) => {
+              const selected = finishers.some((f) => f.racerId === user.id);
+              const full = finishers.length >= 4;
+              return (
+                <button
+                  key={user.id}
+                  onClick={() => toggleRacer(user.id)}
+                  disabled={phase !== 'idle' || (!selected && full)}
+                  className={`group relative flex items-center gap-3 border p-2.5 text-left transition-all duration-200 disabled:opacity-40 ${
+                    selected
+                      ? 'border-transparent'
+                      : 'border-hairline bg-white/[0.015] hover:border-white/25 hover:bg-white/[0.05]'
+                  }`}
+                  style={
+                    selected
+                      ? {
+                          ...withGlow(user.accentColor),
+                          background: `linear-gradient(135deg, ${user.accentColor}2e, ${user.accentColor}0d)`,
+                          boxShadow: `inset 0 0 0 1px ${user.accentColor}, 0 0 30px -12px ${user.accentColor}`,
+                        }
+                      : undefined
+                  }
+                >
+                  <Avatar
+                    src={user.avatarUrl}
+                    name={user.displayName}
+                    size={38}
+                    accent={user.accentColor}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-display text-[0.75rem] font-bold uppercase tracking-wide text-white">
+                      {user.displayName}
+                    </span>
+                    <span className="block truncate font-mono text-[0.6rem] text-[var(--text-faint)]">
+                      {user.scores.allTime} all-time · {user.favoriteRacer}
+                    </span>
+                  </span>
+                  {selected && (
+                    <span
+                      className="grid h-6 w-6 shrink-0 place-items-center rounded-full"
+                      style={{
+                        background: user.accentColor,
+                        boxShadow: `0 0 16px ${user.accentColor}`,
+                      }}
+                    >
+                      <Check size={13} className="text-black" strokeWidth={3.5} />
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </>
+  );
+
+  const gridSection =
+    finishers.length === 0 ? (
+      <div className="grid flex-1 place-items-center px-6 text-center">
+        <div>
+          <Trophy className="mx-auto mb-3 opacity-25" size={38} />
+          <p className="mx-auto max-w-xs text-sm text-[var(--text-faint)]">
+            Pick the winner from the racers list to start logging the race.
+          </p>
+        </div>
+      </div>
+    ) : (
+      <div>
+        <Label className="mb-2">
+          The grid · {finishers.length} {finishers.length === 1 ? 'car' : 'cars'}
+          {finishers.length === 1 ? ' · winner only' : ' · drag to reorder'}
+        </Label>
+        <div ref={gridRef} className="space-y-2">
+          {finishers.map((finisher, index) => {
+            const user = usersById.get(finisher.racerId);
+            if (!user) return null;
+            const medal = PLACE_COLOR[Math.min(index, PLACE_COLOR.length - 1)];
+            const scoreIssue = scoreOrderIssues.get(finisher.racerId);
+            return (
+              <div
+                key={finisher.racerId}
+                className={`border bg-white/[0.015] p-3 transition ${
+                  dragIndex === index
+                    ? 'border-plasma/60 opacity-50'
+                    : scoreIssue
+                      ? 'score-order-flicker border-danger/70'
+                      : 'border-hairline'
+                }`}
+                style={withGlow(user.accentColor)}
+              >
+                <div className="flex items-center gap-2 sm:gap-3">
+                  {/* Drag handle — works on touch and mouse via Pointer Events. */}
+                  <span
+                    onPointerDown={(event) => beginDrag(index, event)}
+                    onPointerMove={dragOverMove}
+                    onPointerUp={endDrag}
+                    onPointerCancel={endDrag}
+                    className="shrink-0 cursor-grab text-[var(--text-faint)] transition hover:text-plasma active:cursor-grabbing"
+                    style={{ touchAction: 'none' }}
+                    title="Drag to reorder"
+                    aria-label="Drag to reorder"
+                  >
+                    <GripVertical size={16} />
+                  </span>
+
+                  {/* Reorder arrows — the touch-friendly path. */}
+                  <span className="flex shrink-0 flex-col">
+                    <button
+                      className="px-0.5 text-[var(--text-faint)] transition hover:text-plasma disabled:opacity-20"
+                      disabled={index === 0 || phase !== 'idle'}
+                      onClick={() => move(index, -1)}
+                      aria-label="Move up"
+                    >
+                      <ChevronUp size={15} />
+                    </button>
+                    <button
+                      className="px-0.5 text-[var(--text-faint)] transition hover:text-plasma disabled:opacity-20"
+                      disabled={index === finishers.length - 1 || phase !== 'idle'}
+                      onClick={() => move(index, 1)}
+                      aria-label="Move down"
+                    >
+                      <ChevronDown size={15} />
+                    </button>
+                  </span>
+
+                  {/* Place medal. */}
+                  <span
+                    className="grid h-8 w-8 shrink-0 place-items-center font-display text-sm font-black text-black"
+                    style={{ background: medal, boxShadow: `0 0 14px ${medal}`, borderRadius: 4 }}
+                    title={`Place ${index + 1}`}
+                  >
+                    {index + 1}
+                  </span>
+
+                  {/* Winner marker rides above the avatar as a ribbon
+                      rather than trailing the name — inline it was the
+                      first thing `truncate` ate on a narrow screen. */}
+                  <span className="relative shrink-0">
+                    <Avatar
+                      src={user.avatarUrl}
+                      name={user.displayName}
+                      size={34}
+                      accent={user.accentColor}
+                    />
+                    {index === 0 && (
+                      <span
+                        className="pointer-events-none absolute -top-3 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap px-1 py-[0.1rem] font-display text-[0.45rem] font-black uppercase leading-none tracking-[0.1em] text-black"
+                        style={{ background: medal, boxShadow: `0 0 10px ${medal}`, borderRadius: 2 }}
+                      >
+                        Winner
+                      </span>
+                    )}
+                  </span>
+
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-display text-[0.75rem] font-bold uppercase tracking-wide text-white">
+                      {user.displayName}
+                    </span>
+                    <span className="block truncate font-mono text-[0.6rem] text-[var(--text-faint)]">
+                      {user.favoriteRacer}
+                    </span>
+                  </span>
+
+                  {/* Score. */}
+                  <label className="flex shrink-0 flex-col items-end gap-0.5">
+                    <span className="label !text-[0.5rem]">Score</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={999}
+                      inputMode="numeric"
+                      className={`field !w-[4.5rem] !px-2 !py-1.5 text-right font-mono text-sm ${
+                        scoreIssue ? '!border-danger/70' : ''
+                      }`}
+                      placeholder={String(DEFAULT_SCORE_BY_PLACE[index] ?? 0)}
+                      value={finisher.gameScore}
+                      disabled={phase !== 'idle'}
+                      onChange={(event) => setGameScore(finisher.racerId, event.target.value)}
+                    />
+                  </label>
+
+                  <button
+                    className="shrink-0 p-1.5 text-[var(--text-faint)] transition hover:text-danger disabled:opacity-30"
+                    disabled={phase !== 'idle'}
+                    onClick={() => toggleRacer(finisher.racerId)}
+                    aria-label={`Remove ${user.displayName}`}
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+
+                {/* Captured stats — one input per admin-defined metric. */}
+                {captured.length > 0 && (
+                  <div className="mt-2.5 grid grid-cols-2 gap-2 pl-9 sm:grid-cols-3 sm:pl-11 lg:grid-cols-4">
+                    {captured.map((metric) => (
+                      <label key={metric.id} className="flex flex-col gap-0.5">
+                        <span className="label !text-[0.5rem] truncate">
+                          {metric.label}
+                          {metric.unit ? ` · ${metric.unit}` : ''}
+                        </span>
+                        <input
+                          type="number"
+                          min={0}
+                          inputMode="numeric"
+                          className="field !px-2 !py-1.5 font-mono text-xs"
+                          placeholder="0"
+                          value={finisher.stats[metric.id] ?? ''}
+                          disabled={phase !== 'idle'}
+                          onChange={(event) => setStat(finisher.racerId, metric.id, event.target.value)}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+
+  const extraSection = (
+    <>
+      {/* Kill log — who took out whom. Sets kills/deaths; revenge auto-tags. */}
+      {finishers.length >= 2 && (
+        <div>
+          <Label>Kill log · optional{kills.length > 0 ? ` · ${kills.length}` : ''}</Label>
+          <div className="mt-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <RacerSelect
+                className="sm:flex-1"
+                value={killer}
+                onChange={setKiller}
+                placeholder="Killer…"
+                disabled={phase !== 'idle'}
+                racers={finishers
+                  .map((f) => usersById.get(f.racerId))
+                  .filter((u): u is PublicUser => u !== undefined)}
+              />
+              <span className="shrink-0 text-center text-[0.62rem] uppercase tracking-widest text-[var(--text-faint)]">
+                took out
+              </span>
+              <RacerSelect
+                className="sm:flex-1"
+                value={victim}
+                onChange={setVictim}
+                placeholder="Victim…"
+                disabled={phase !== 'idle' || !killer}
+                racers={finishers
+                  .map((f) => usersById.get(f.racerId))
+                  .filter((u): u is PublicUser => u !== undefined && u.id !== killer)}
+              />
+              <button
+                className="btn btn-ghost shrink-0"
+                disabled={phase !== 'idle' || !killer || !victim || killer === victim}
+                onClick={addKill}
+              >
+                <Plus size={14} strokeWidth={3} /> Add kill
+              </button>
+            </div>
+
+            {kills.length > 0 && (
+              <ul className="mt-2 space-y-1.5">
+                {kills.map((kill, index) => {
+                  const killerUser = usersById.get(kill.killerId);
+                  const victimUser = usersById.get(kill.victimId);
+                  return (
+                    <li
+                      key={`${kill.killerId}-${kill.victimId}-${index}`}
+                      className="flex items-center gap-2 border border-hairline bg-white/[0.015] px-3 py-1.5 text-xs"
+                    >
+                      <Skull size={13} className="shrink-0 text-[var(--text-faint)]" />
+                      <span className="truncate font-display uppercase tracking-wide text-white">
+                        {killerUser?.displayName ?? '—'}
+                      </span>
+                      <span className="text-[var(--text-faint)]">→</span>
+                      <span className="truncate font-display uppercase tracking-wide text-white">
+                        {victimUser?.displayName ?? '—'}
+                      </span>
+                      <button
+                        className="ml-auto shrink-0 text-[var(--text-faint)] transition hover:text-danger disabled:opacity-30"
+                        disabled={phase !== 'idle'}
+                        onClick={() => removeKill(index)}
+                        aria-label="Remove kill"
+                      >
+                        <X size={13} />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+
+            <p className="mt-1.5 font-mono text-[0.6rem] text-[var(--text-faint)]">
+              Each kill sets the racers' kills &amp; deaths. Revenge — a same-day
+              payback — is tagged automatically.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Optional note. */}
+      <div>
+        <Label className="mb-1.5">Note · optional</Label>
+        <input
+          className="field"
+          placeholder="e.g. Volcano Loop, photo finish"
+          maxLength={140}
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          disabled={phase !== 'idle'}
+        />
+      </div>
+    </>
+  );
+
+  const scoreIssueBanner = scoreOrderIssues.size > 0 && (
+    <div className="space-y-1.5">
+      {[...scoreOrderIssues.values()].map((message) => (
+        <p key={message} className="border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
+          {message}
+        </p>
+      ))}
+    </div>
+  );
+
+  const errorBanner = error && (
+    <p className="border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">{error}</p>
+  );
+
   return createPortal(
     <div
       className="fixed inset-0 z-[100]"
@@ -374,7 +784,7 @@ export function AddScoreOverlay({
         aria-label="Close"
       />
 
-      {/* Full-screen panel: header · two-pane body · footer. */}
+      {/* Full-screen panel: header · body · footer. */}
       <Panel
         accent={accent}
         lit
@@ -389,12 +799,21 @@ export function AddScoreOverlay({
         {/* Header. */}
         <div className="flex shrink-0 items-start justify-between gap-4 border-b border-hairline px-5 py-4 sm:px-8 sm:py-5">
           <div className="min-w-0">
-            <Label>Race result</Label>
-            <h2 className="headline mt-1 text-2xl sm:text-4xl">Log the race</h2>
-            <p className="mt-1.5 max-w-2xl text-xs text-[var(--text-dim)]">
-              Pick the winner — that's all you need. Add up to three more racers,
-              scores and a kill log if you have them. Every board recalculates itself.
-            </p>
+            <Label>Log the race</Label>
+            {/* Step dots — mobile only, a glance at where you are in the wizard. */}
+            {!isDesktop && (
+              <div className="mt-2.5 flex items-center gap-1.5" aria-hidden="true">
+                {STEPS.map((candidate) => (
+                  <span
+                    key={candidate}
+                    className="h-1.5 w-5 rounded-full transition-colors"
+                    style={{
+                      background: candidate === step ? accent : 'rgb(255 255 255 / 0.12)',
+                    }}
+                  />
+                ))}
+              </div>
+            )}
           </div>
           <button
             className="btn btn-ghost shrink-0 !px-2.5 !py-2"
@@ -406,433 +825,109 @@ export function AddScoreOverlay({
           </button>
         </div>
 
-        {/* Body — racers on the left, the race on the right. */}
-        <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-          {/* LEFT · racer picker (collapsible on mobile). */}
-          <div className="flex min-h-0 shrink-0 flex-col border-b border-hairline lg:w-[380px] lg:border-b-0 lg:border-r xl:w-[420px]">
-            {/* Mobile toggle. */}
-            <button
-              className="flex shrink-0 items-center justify-between px-5 py-3 lg:hidden"
-              onClick={() => setPickerOpen((o) => !o)}
-              aria-expanded={pickerOpen}
-            >
-              <Label>Racers · {finishers.length} selected</Label>
-              {pickerOpen ? (
-                <ChevronUp size={16} className="text-[var(--text-faint)]" />
-              ) : (
-                <ChevronDown size={16} className="text-[var(--text-faint)]" />
-              )}
-            </button>
+        {/* Body. */}
+        {isDesktop ? (
+          <div className="flex min-h-0 flex-1 flex-row">
+            {/* LEFT · racer picker. */}
+            <div className="flex min-h-0 flex-1 flex-col border-r border-hairline px-6 py-6 lg:w-[380px] lg:flex-none xl:w-[420px]">
+              <Label className="mb-2">Add racers</Label>
+              {racerPickerFields}
+            </div>
 
-            <div
-              className={`min-h-0 flex-1 flex-col px-5 pb-5 lg:flex lg:px-6 lg:py-6 ${
-                pickerOpen ? 'flex' : 'hidden'
-              }`}
-            >
-              <Label className="mb-2 hidden lg:block">Add racers</Label>
-
-              {/* Search. */}
-              <div className="relative shrink-0">
-                <Search
-                  size={16}
-                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-faint)]"
-                />
-                <input
-                  ref={searchRef}
-                  className="field !pl-10"
-                  placeholder={
-                    finishers.length >= 4
-                      ? 'Grid full — remove a car to swap one in'
-                      : 'Name, email or ride…'
-                  }
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  disabled={phase !== 'idle'}
-                />
-              </div>
-
-              {/* Roster. */}
-              <div
-                className="no-scrollbar mt-3 max-h-[42vh] flex-1 overflow-y-auto pr-1 lg:max-h-none"
-                style={{ scrollbarGutter: 'stable' }}
-              >
-                {filtered.length === 0 ? (
-                  <p className="py-10 text-center text-sm text-[var(--text-faint)]">
-                    Nobody matches “{query}”.
-                  </p>
-                ) : (
-                  <div className="grid grid-cols-1 gap-2">
-                    {filtered.map((user) => {
-                      const selected = finishers.some((f) => f.racerId === user.id);
-                      const full = finishers.length >= 4;
-                      return (
-                        <button
-                          key={user.id}
-                          onClick={() => toggleRacer(user.id)}
-                          disabled={phase !== 'idle' || (!selected && full)}
-                          className={`group relative flex items-center gap-3 border p-2.5 text-left transition-all duration-200 disabled:opacity-40 ${
-                            selected
-                              ? 'border-transparent'
-                              : 'border-hairline bg-white/[0.015] hover:border-white/25 hover:bg-white/[0.05]'
-                          }`}
-                          style={
-                            selected
-                              ? {
-                                  ...withGlow(user.accentColor),
-                                  background: `linear-gradient(135deg, ${user.accentColor}2e, ${user.accentColor}0d)`,
-                                  boxShadow: `inset 0 0 0 1px ${user.accentColor}, 0 0 30px -12px ${user.accentColor}`,
-                                }
-                              : undefined
-                          }
-                        >
-                          <Avatar
-                            src={user.avatarUrl}
-                            name={user.displayName}
-                            size={38}
-                            accent={user.accentColor}
-                          />
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate font-display text-[0.75rem] font-bold uppercase tracking-wide text-white">
-                              {user.displayName}
-                            </span>
-                            <span className="block truncate font-mono text-[0.6rem] text-[var(--text-faint)]">
-                              {user.scores.allTime} all-time · {user.favoriteRacer}
-                            </span>
-                          </span>
-                          {selected && (
-                            <span
-                              className="grid h-6 w-6 shrink-0 place-items-center rounded-full"
-                              style={{
-                                background: user.accentColor,
-                                boxShadow: `0 0 16px ${user.accentColor}`,
-                              }}
-                            >
-                              <Check size={13} className="text-black" strokeWidth={3.5} />
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+            {/* RIGHT · the race. */}
+            <div className="no-scrollbar flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-8 py-6">
+              {gridSection}
+              {finishers.length > 0 && extraSection}
+              {scoreIssueBanner}
+              {errorBanner}
             </div>
           </div>
-
-          {/* RIGHT · the race. */}
-          <div className="no-scrollbar flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-5 sm:px-8 sm:py-6">
-            {finishers.length === 0 ? (
-              <div className="grid flex-1 place-items-center px-6 text-center">
-                <div>
-                  <Trophy className="mx-auto mb-3 opacity-25" size={38} />
-                  <p className="mx-auto max-w-xs text-sm text-[var(--text-faint)]">
-                    Pick the winner from the racers list to start logging the race.
-                  </p>
-                </div>
+        ) : (
+          <div className="no-scrollbar flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-5">
+            {step === 'racers' && (
+              <div className="flex min-h-0 flex-1 flex-col">
+                <Label className="mb-2">Racers · {finishers.length} selected</Label>
+                {racerPickerFields}
               </div>
-            ) : (
+            )}
+            {step === 'grid' && (
               <>
-                {/* The grid — drag or use the arrows to set the running order. */}
-                <div>
-                  <Label className="mb-2">
-                    The grid · {finishers.length} {finishers.length === 1 ? 'car' : 'cars'}
-                    {finishers.length === 1 ? ' · winner only' : ' · drag to reorder'}
-                  </Label>
-                  <div ref={gridRef} className="space-y-2">
-                    {finishers.map((finisher, index) => {
-                      const user = usersById.get(finisher.racerId);
-                      if (!user) return null;
-                      const medal = PLACE_COLOR[Math.min(index, PLACE_COLOR.length - 1)];
-                      const scoreIssue = scoreOrderIssues.get(finisher.racerId);
-                      return (
-                        <div
-                          key={finisher.racerId}
-                          className={`border bg-white/[0.015] p-3 transition ${
-                            dragIndex === index
-                              ? 'border-plasma/60 opacity-50'
-                              : scoreIssue
-                                ? 'score-order-flicker border-danger/70'
-                                : 'border-hairline'
-                          }`}
-                          style={withGlow(user.accentColor)}
-                        >
-                          <div className="flex items-center gap-2 sm:gap-3">
-                            {/* Drag handle — works on touch and mouse via Pointer Events. */}
-                            <span
-                              onPointerDown={(event) => beginDrag(index, event)}
-                              onPointerMove={dragOverMove}
-                              onPointerUp={endDrag}
-                              onPointerCancel={endDrag}
-                              className="shrink-0 cursor-grab text-[var(--text-faint)] transition hover:text-plasma active:cursor-grabbing"
-                              style={{ touchAction: 'none' }}
-                              title="Drag to reorder"
-                              aria-label="Drag to reorder"
-                            >
-                              <GripVertical size={16} />
-                            </span>
-
-                            {/* Reorder arrows — the touch-friendly path. */}
-                            <span className="flex shrink-0 flex-col">
-                              <button
-                                className="px-0.5 text-[var(--text-faint)] transition hover:text-plasma disabled:opacity-20"
-                                disabled={index === 0 || phase !== 'idle'}
-                                onClick={() => move(index, -1)}
-                                aria-label="Move up"
-                              >
-                                <ChevronUp size={15} />
-                              </button>
-                              <button
-                                className="px-0.5 text-[var(--text-faint)] transition hover:text-plasma disabled:opacity-20"
-                                disabled={index === finishers.length - 1 || phase !== 'idle'}
-                                onClick={() => move(index, 1)}
-                                aria-label="Move down"
-                              >
-                                <ChevronDown size={15} />
-                              </button>
-                            </span>
-
-                            {/* Place medal. */}
-                            <span
-                              className="grid h-8 w-8 shrink-0 place-items-center font-display text-sm font-black text-black"
-                              style={{ background: medal, boxShadow: `0 0 14px ${medal}`, borderRadius: 4 }}
-                              title={`Place ${index + 1}`}
-                            >
-                              {index + 1}
-                            </span>
-
-                            {/* Winner marker rides above the avatar as a ribbon
-                                rather than trailing the name — inline it was the
-                                first thing `truncate` ate on a narrow screen. */}
-                            <span className="relative shrink-0">
-                              <Avatar
-                                src={user.avatarUrl}
-                                name={user.displayName}
-                                size={34}
-                                accent={user.accentColor}
-                              />
-                              {index === 0 && (
-                                <span
-                                  className="pointer-events-none absolute -top-3 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap px-1 py-[0.1rem] font-display text-[0.45rem] font-black uppercase leading-none tracking-[0.1em] text-black"
-                                  style={{ background: medal, boxShadow: `0 0 10px ${medal}`, borderRadius: 2 }}
-                                >
-                                  Winner
-                                </span>
-                              )}
-                            </span>
-
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate font-display text-[0.75rem] font-bold uppercase tracking-wide text-white">
-                                {user.displayName}
-                              </span>
-                              <span className="block truncate font-mono text-[0.6rem] text-[var(--text-faint)]">
-                                {user.favoriteRacer}
-                              </span>
-                            </span>
-
-                            {/* Score. */}
-                            <label className="flex shrink-0 flex-col items-end gap-0.5">
-                              <span className="label !text-[0.5rem]">Score</span>
-                              <input
-                                type="number"
-                                min={0}
-                                max={999}
-                                inputMode="numeric"
-                                className={`field !w-[4.5rem] !px-2 !py-1.5 text-right font-mono text-sm ${
-                                  scoreIssue ? '!border-danger/70' : ''
-                                }`}
-                                placeholder={String(DEFAULT_SCORE_BY_PLACE[index] ?? 0)}
-                                value={finisher.gameScore}
-                                disabled={phase !== 'idle'}
-                                onChange={(event) => setGameScore(finisher.racerId, event.target.value)}
-                              />
-                            </label>
-
-                            <button
-                              className="shrink-0 p-1.5 text-[var(--text-faint)] transition hover:text-danger disabled:opacity-30"
-                              disabled={phase !== 'idle'}
-                              onClick={() => toggleRacer(finisher.racerId)}
-                              aria-label={`Remove ${user.displayName}`}
-                            >
-                              <X size={15} />
-                            </button>
-                          </div>
-
-                          {/* Captured stats — one input per admin-defined metric. */}
-                          {captured.length > 0 && (
-                            <div className="mt-2.5 grid grid-cols-2 gap-2 pl-9 sm:grid-cols-3 sm:pl-11 lg:grid-cols-4">
-                              {captured.map((metric) => (
-                                <label key={metric.id} className="flex flex-col gap-0.5">
-                                  <span className="label !text-[0.5rem] truncate">
-                                    {metric.label}
-                                    {metric.unit ? ` · ${metric.unit}` : ''}
-                                  </span>
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    inputMode="numeric"
-                                    className="field !px-2 !py-1.5 font-mono text-xs"
-                                    placeholder="0"
-                                    value={finisher.stats[metric.id] ?? ''}
-                                    disabled={phase !== 'idle'}
-                                    onChange={(event) =>
-                                      setStat(finisher.racerId, metric.id, event.target.value)
-                                    }
-                                  />
-                                </label>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Kill log — who took out whom. Sets kills/deaths; revenge auto-tags. */}
-                {finishers.length >= 2 && (
-                  <div>
-                    {/* Optional, so it folds away on mobile until tapped open. */}
-                    <button
-                      type="button"
-                      className="flex w-full items-center justify-between lg:pointer-events-none"
-                      onClick={() => setKillsOpen((o) => !o)}
-                      aria-expanded={killsOpen}
-                    >
-                      <Label>Kill log · optional{kills.length > 0 ? ` · ${kills.length}` : ''}</Label>
-                      <ChevronDown
-                        size={16}
-                        className={`text-[var(--text-faint)] transition-transform lg:hidden ${
-                          killsOpen ? 'rotate-180' : ''
-                        }`}
-                      />
-                    </button>
-                    <div className={`mt-2 lg:block ${killsOpen ? 'block' : 'hidden'}`}>
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                      <RacerSelect
-                        className="sm:flex-1"
-                        value={killer}
-                        onChange={setKiller}
-                        placeholder="Killer…"
-                        disabled={phase !== 'idle'}
-                        racers={
-                          finishers
-                            .map((f) => usersById.get(f.racerId))
-                            .filter((u): u is PublicUser => u !== undefined)
-                        }
-                      />
-                      <span className="shrink-0 text-center text-[0.62rem] uppercase tracking-widest text-[var(--text-faint)]">
-                        took out
-                      </span>
-                      <RacerSelect
-                        className="sm:flex-1"
-                        value={victim}
-                        onChange={setVictim}
-                        placeholder="Victim…"
-                        disabled={phase !== 'idle' || !killer}
-                        racers={
-                          finishers
-                            .map((f) => usersById.get(f.racerId))
-                            .filter((u): u is PublicUser => u !== undefined && u.id !== killer)
-                        }
-                      />
-                      <button
-                        className="btn btn-ghost shrink-0"
-                        disabled={phase !== 'idle' || !killer || !victim || killer === victim}
-                        onClick={addKill}
-                      >
-                        <Plus size={14} strokeWidth={3} /> Add kill
-                      </button>
-                    </div>
-
-                    {kills.length > 0 && (
-                      <ul className="mt-2 space-y-1.5">
-                        {kills.map((kill, index) => {
-                          const killerUser = usersById.get(kill.killerId);
-                          const victimUser = usersById.get(kill.victimId);
-                          return (
-                            <li
-                              key={`${kill.killerId}-${kill.victimId}-${index}`}
-                              className="flex items-center gap-2 border border-hairline bg-white/[0.015] px-3 py-1.5 text-xs"
-                            >
-                              <Skull size={13} className="shrink-0 text-[var(--text-faint)]" />
-                              <span className="truncate font-display uppercase tracking-wide text-white">
-                                {killerUser?.displayName ?? '—'}
-                              </span>
-                              <span className="text-[var(--text-faint)]">→</span>
-                              <span className="truncate font-display uppercase tracking-wide text-white">
-                                {victimUser?.displayName ?? '—'}
-                              </span>
-                              <button
-                                className="ml-auto shrink-0 text-[var(--text-faint)] transition hover:text-danger disabled:opacity-30"
-                                disabled={phase !== 'idle'}
-                                onClick={() => removeKill(index)}
-                                aria-label="Remove kill"
-                              >
-                                <X size={13} />
-                              </button>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-
-                    <p className="mt-1.5 font-mono text-[0.6rem] text-[var(--text-faint)]">
-                      Each kill sets the racers' kills &amp; deaths. Revenge — a same-day
-                      payback — is tagged automatically.
-                    </p>
-                    </div>
-                  </div>
-                )}
-
-                {/* Optional note. */}
-                <div>
-                  <Label className="mb-1.5">Note · optional</Label>
-                  <input
-                    className="field"
-                    placeholder="e.g. Volcano Loop, photo finish"
-                    maxLength={140}
-                    value={note}
-                    onChange={(event) => setNote(event.target.value)}
-                    disabled={phase !== 'idle'}
-                  />
-                </div>
+                {gridSection}
+                {scoreIssueBanner}
               </>
             )}
-
-            {scoreOrderIssues.size > 0 && (
-              <div className="space-y-1.5">
-                {[...scoreOrderIssues.values()].map((message) => (
-                  <p
-                    key={message}
-                    className="border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger"
-                  >
-                    {message}
-                  </p>
-                ))}
-              </div>
-            )}
-
-            {error && (
-              <p className="border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
-                {error}
-              </p>
+            {step === 'extra' && (
+              <>
+                {extraSection}
+                {errorBanner}
+              </>
             )}
           </div>
-        </div>
+        )}
 
         {/* Footer — actions pinned to the bottom. */}
-        <div className="flex shrink-0 flex-col-reverse items-stretch gap-3 border-t border-hairline px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-8">
-          <button className="btn btn-ghost" onClick={requestClose} disabled={phase !== 'idle'}>
-            Cancel
-          </button>
-          <SubmitButton
-            accent={accent}
-            phase={phase}
-            armed={canSubmit}
-            winnerName={winner?.displayName}
-            onClick={() => void submit()}
-          />
-        </div>
+        {isDesktop ? (
+          <div className="flex shrink-0 flex-col-reverse items-stretch gap-3 border-t border-hairline px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-8">
+            <button className="btn btn-ghost" onClick={requestClose} disabled={phase !== 'idle'}>
+              Cancel
+            </button>
+            <SubmitButton
+              accent={accent}
+              phase={phase}
+              armed={canSubmit}
+              winnerName={winner?.displayName}
+              onClick={() => void submit()}
+            />
+          </div>
+        ) : (
+          <div className="sticky bottom-0 flex shrink-0 items-center gap-3 border-t border-hairline px-5 py-4">
+            <button
+              className="btn btn-ghost !px-4"
+              disabled={phase !== 'idle'}
+              onClick={() => {
+                if (step === 'racers') requestClose();
+                else setStep(step === 'extra' ? 'grid' : 'racers');
+              }}
+            >
+              {step === 'racers' ? 'Cancel' : 'Back'}
+            </button>
+
+            {step === 'racers' && (
+              <NeonButton
+                variant="primary"
+                accent={accent}
+                className="flex-1"
+                disabled={!canProceedPastRacers}
+                onClick={() => setStep('grid')}
+              >
+                Proceed
+              </NeonButton>
+            )}
+            {step === 'grid' && (
+              <NeonButton
+                variant="primary"
+                accent={accent}
+                className="flex-1"
+                disabled={!canProceedPastGrid}
+                onClick={() => setStep('extra')}
+              >
+                Proceed
+              </NeonButton>
+            )}
+            {step === 'extra' && (
+              <SubmitButton
+                accent={accent}
+                phase={phase}
+                armed={canSubmit}
+                winnerName={winner?.displayName}
+                winnerAvatarUrl={winner?.avatarUrl}
+                variant="mobile"
+                className="flex-1"
+                onClick={() => void submit()}
+              />
+            )}
+          </div>
+        )}
       </Panel>
     </div>,
     document.body,
@@ -844,18 +939,30 @@ export function AddScoreOverlay({
  *  - disarmed: flat, waiting for a valid grid
  *  - armed:    rotating conic ring, drifting gradient, hover sparks
  *  - charging: fills left-to-right, shockwave, then flashes white on launch
+ *
+ * `variant="mobile"` swaps the idle-armed content for the winner's photo +
+ * "Add Score" + a crown, since on the wizard's last step the racer being
+ * scored is already the entire context — naming them again ("Crown Alex")
+ * is redundant when their face is right there in the grid one step back.
+ * Every other state (disarmed/charging/launched) stays the same on both.
  */
 function SubmitButton({
   accent,
   phase,
   armed,
   winnerName,
+  winnerAvatarUrl,
+  variant = 'desktop',
+  className = '',
   onClick,
 }: {
   accent: string;
   phase: 'idle' | 'charging' | 'launched';
   armed: boolean;
   winnerName?: string;
+  winnerAvatarUrl?: string;
+  variant?: 'desktop' | 'mobile';
+  className?: string;
   onClick: () => void;
 }) {
   const sparks = useMemo(
@@ -871,13 +978,16 @@ function SubmitButton({
   );
 
   const busy = phase !== 'idle';
+  const armedIdle = armed && !busy;
   const label =
     phase === 'launched'
       ? 'Launched'
       : phase === 'charging'
         ? 'Recording…'
         : armed
-          ? `Crown ${winnerName?.split(' ')[0] ?? 'them'}`
+          ? variant === 'mobile'
+            ? 'Add Score'
+            : `Crown ${winnerName?.split(' ')[0] ?? 'them'}`
           : 'Pick a winner';
 
   return (
@@ -886,7 +996,7 @@ function SubmitButton({
       disabled={!armed || busy}
       className={`btn relative isolate min-w-[13rem] overflow-visible !py-3.5 !text-[0.72rem] sm:!text-xs ${
         armed ? 'ring-spin text-white' : 'text-[var(--text-faint)]'
-      }`}
+      } ${className}`}
       style={{
         ...withGlow(accent),
         background: armed
@@ -928,7 +1038,7 @@ function SubmitButton({
       )}
 
       {/* Hover sparks, armed state only. */}
-      {armed && !busy && (
+      {armedIdle && (
         <span className="pointer-events-none absolute inset-0 overflow-visible opacity-0 transition-opacity duration-300 hover:opacity-100 group-hover:opacity-100 [button:hover>&]:opacity-100">
           {sparks.map((spark) => (
             <span
@@ -946,10 +1056,19 @@ function SubmitButton({
         </span>
       )}
 
-      <Trophy
-        size={15}
-        className={phase === 'charging' ? 'animate-spin' : armed ? 'animate-hover' : ''}
-      />
+      {variant === 'mobile' && armedIdle ? (
+        <span className="relative inline-flex shrink-0">
+          <Avatar src={winnerAvatarUrl} name={winnerName ?? ''} size={30} accent="#fff" />
+          <span
+            className="absolute -right-1 -top-1 z-20 grid h-[16px] w-[16px] place-items-center rounded-full"
+            style={{ background: '#0d1122', boxShadow: '0 0 0 1.5px rgb(255 255 255 / 0.55), 0 0 8px rgba(0,0,0,0.6)' }}
+          >
+            <Crown size={10} className="text-[#FFD23F]" />
+          </span>
+        </span>
+      ) : (
+        <Trophy size={15} className={phase === 'charging' ? 'animate-spin' : armed ? 'animate-hover' : ''} />
+      )}
       <span className="relative">{label}</span>
 
       <style>{`

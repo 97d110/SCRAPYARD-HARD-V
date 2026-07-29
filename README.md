@@ -445,6 +445,27 @@ Honestly: barely. Every board is an aggregation computed on read, so there is no
 meaningful cached view of one. The worker gets the app *open* offline; the boot
 then says so and retries itself when the link comes back.
 
+### Push notifications
+
+Optional, and off by default until `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` are set
+(see `apps/api/.env.example` — generate the pair with `npx web-push generate-vapid-keys`).
+Configured, a racer can flip a toggle on their own profile page to get a push
+whenever a race is recorded; the toggle is per-browser, not per-account, so
+enabling it on a phone doesn't opt in a laptop too, and vice versa.
+
+The subscription itself lives in `pushSubscriptions` (`_id` is the push
+service's own endpoint URL — already a unique key, so there's nothing else to
+generate). [`apps/api/src/push/push.service.ts`](apps/api/src/push/push.service.ts)
+sends and self-heals: a 404/410 from the push service means that subscription
+is gone for good (uninstalled, permission revoked at the OS level), so it's
+deleted rather than retried forever. The service worker's `push` and
+`notificationclick` handlers live at the bottom of
+[`apps/web/public/sw.js`](apps/web/public/sw.js).
+
+**iOS needs the app installed to the home screen first** (iOS 16.4+) — Safari
+itself does not support Web Push, only a standalone home-screen app does. The
+toggle detects this and won't offer to subscribe from inside Safari.
+
 ### iOS
 
 The notch is handled — `viewport-fit=cover`, a translucent status bar, and chrome

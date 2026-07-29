@@ -176,6 +176,16 @@ export interface DeleteGameResponse {
   recomputedGames: number;
 }
 
+/**
+ * A browser's Web Push subscription, exactly as `PushManager.subscribe()`
+ * hands it back (`JSON.stringify`-ed). The endpoint doubles as its own unique
+ * id — a push service never issues the same one twice.
+ */
+export interface PushSubscriptionInput {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+}
+
 /** One racer's slice of a race, for their profile timeline. */
 export interface GameParticipation {
   gameId: string;
@@ -219,6 +229,10 @@ export interface UserScores {
   monthly: Record<string, number>;
   /** 'YYYY-MM-DD' -> wins. Today only. */
   daily: Record<string, number>;
+  /** Total races entered (any place), all-time. */
+  races: number;
+  /** ISO timestamp of this racer's most recent race, or null if they've never raced. */
+  lastRaceAt: string | null;
 }
 
 /**

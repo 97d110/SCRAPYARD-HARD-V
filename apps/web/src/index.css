@@ -226,15 +226,30 @@
     );
   }
 
+  /*
+   * Deliberately its own scale, not just its own colour — a primary CTA needs
+   * to read as *the* action in the room, not a ghost button wearing a gradient.
+   * Bumped up from the shared `.btn` base: more padding, a bigger label, and a
+   * shadow with real presence at rest (not just on hover).
+   */
   .btn-primary {
+    padding: 1rem 2rem;
+    font-size: 0.85rem;
+    letter-spacing: 0.2em;
     background: linear-gradient(135deg, var(--blaze), #ff2d95 130%);
     color: #fff;
-    box-shadow: 0 0 0 1px rgb(255 255 255 / 0.14), 0 10px 34px -12px var(--blaze);
+    box-shadow:
+      0 0 0 1.5px rgb(255 255 255 / 0.22),
+      0 16px 42px -12px var(--blaze),
+      0 0 32px -16px var(--blaze);
   }
   .btn-primary:hover {
     filter: brightness(1.14) saturate(1.1);
-    box-shadow: 0 0 0 1px rgb(255 255 255 / 0.22), 0 14px 44px -10px var(--blaze);
-    transform: translateY(-1px);
+    box-shadow:
+      0 0 0 1.5px rgb(255 255 255 / 0.3),
+      0 20px 52px -10px var(--blaze),
+      0 0 42px -14px var(--blaze);
+    transform: translateY(-1px) scale(1.015);
   }
   .btn-primary:active {
     transform: translateY(1px) scale(0.985);

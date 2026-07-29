@@ -26,9 +26,14 @@ function metricValue(entry: LeaderboardEntry, id: string): number {
   return typeof value === 'number' ? value : 0;
 }
 
-/** Integers as-is; the one averaged metric (avgPlace) to a single decimal. */
-function formatMetric(value: number): string {
+/**
+ * Integers as-is. `avgPlace` always floors to a whole place (1.5 → 1, never
+ * shown as a decimal) — any other non-integer metric (e.g. a formula) still
+ * gets a single decimal.
+ */
+function formatMetric(value: number, metricId?: string): string {
   if (!Number.isFinite(value)) return '0';
+  if (metricId === 'avgPlace') return String(Math.floor(value));
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
@@ -325,7 +330,7 @@ function SortableTable({
                   }`}
                   style={active ? { textShadow: `0 0 14px ${entry.accentColor}` } : undefined}
                 >
-                  {formatMetric(value)}
+                  {formatMetric(value, column.id)}
                 </span>
               );
             })}

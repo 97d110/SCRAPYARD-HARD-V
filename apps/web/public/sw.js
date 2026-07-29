@@ -138,3 +138,49 @@ self.addEventListener('fetch', (event) => {
     }),
   );
 });
+
+/*
+ * ── Push notifications ──────────────────────────────────────────────────────
+ * Optional feature (see PushService on the API side) — this worker only ever
+ * sees a push event at all once a racer has opted in from their profile, so
+ * there's no separate "is this on" check needed here.
+ */
+
+/** The payload is our own JSON (see PushService.notifyRaceRecorded), not GCM/FCM's. */
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    // A malformed or empty payload still deserves *a* notification rather than none.
+  }
+
+  const title = data.title || 'Scrapyard Hard V';
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: data.body || '',
+      icon: '/icons/arthur-192.png',
+      badge: '/icons/arthur-192.png',
+      // Round-trips through notificationclick below.
+      data: { url: data.url || '/' },
+    }),
+  );
+});
+
+/** Focus an already-open tab rather than piling up duplicate windows. */
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || '/';
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+      for (const client of windowClients) {
+        if (client.url.startsWith(self.location.origin) && 'focus' in client) {
+          if ('navigate' in client) client.navigate(url);
+          return client.focus();
+        }
+      }
+      return self.clients.openWindow ? self.clients.openWindow(url) : undefined;
+    }),
+  );
+});

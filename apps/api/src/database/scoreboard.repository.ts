@@ -175,30 +175,72 @@ export class ScoreboardRepository {
   }
 
   /**
-   * Win counts (first-place finishes) per racer for the periods the UI renders.
+   * Win counts (first-place finishes) per racer for the periods the UI renders,
+   * plus two participation signals used to sort the racer picker: total races
+   * entered (any place) and the timestamp of their most recent race. Both are
+   * all-time only — a "raced recently" signal doesn't make sense split by
+   * month/day the way win tallies do.
+   *
    * Backs `GET /users` and the profile ranks.
    */
-  async scoresByUser(): Promise<Map<string, { allTime: number; month: number; day: number }>> {
+  async scoresByUser(): Promise<
+    Map<string, { allTime: number; month: number; day: number; races: number; lastAt: string | null }>
+  > {
     const games = await this.mongo.games();
     const month = monthKey();
     const day = dayKey();
 
     const rows = await games
-      .aggregate<{ _id: string; allTime: number; month: number; day: number }>([
+      .aggregate<{
+        _id: string;
+        allTime: number;
+        month: number;
+        day: number;
+        races: number;
+        lastAt: Date | null;
+      }>([
         { $unwind: '$results' },
-        { $match: { 'results.place': 1 } },
         {
           $group: {
             _id: '$results.racerId',
-            allTime: { $sum: 1 },
-            month: { $sum: { $cond: [{ $eq: ['$monthKey', month] }, 1, 0] } },
-            day: { $sum: { $cond: [{ $eq: ['$dayKey', day] }, 1, 0] } },
+            allTime: { $sum: { $cond: [{ $eq: ['$results.place', 1] }, 1, 0] } },
+            month: {
+              $sum: {
+                $cond: [
+                  { $and: [{ $eq: ['$results.place', 1] }, { $eq: ['$monthKey', month] }] },
+                  1,
+                  0,
+                ],
+              },
+            },
+            day: {
+              $sum: {
+                $cond: [
+                  { $and: [{ $eq: ['$results.place', 1] }, { $eq: ['$dayKey', day] }] },
+                  1,
+                  0,
+                ],
+              },
+            },
+            races: { $sum: 1 },
+            lastAt: { $max: '$at' },
           },
         },
       ])
       .toArray();
 
-    return new Map(rows.map((r) => [r._id, { allTime: r.allTime, month: r.month, day: r.day }]));
+    return new Map(
+      rows.map((r) => [
+        r._id,
+        {
+          allTime: r.allTime,
+          month: r.month,
+          day: r.day,
+          races: r.races,
+          lastAt: r.lastAt ? new Date(r.lastAt).toISOString() : null,
+        },
+      ]),
+    );
   }
 
   /** Every period that has at least one game, for the archive picker. */

@@ -156,6 +156,19 @@ export interface ContentDoc {
   }>;
 }
 
+/**
+ * One browser's Web Push subscription. `_id` is the endpoint URL itself —
+ * that's already the unique key a push service hands out per subscribed
+ * device, so there's no need for a separate generated id or a unique index.
+ */
+export interface PushSubscriptionDoc {
+  _id: string;
+  userId: string;
+  keys: { p256dh: string; auth: string };
+  createdAt: string;
+  userAgent?: string;
+}
+
 /** Cache slot on globalThis — survives dev-server reloads. */
 interface MongoGlobal {
   client?: MongoClient;
@@ -243,6 +256,10 @@ export class MongoService implements OnModuleDestroy {
     return (await this.db()).collection<ContentDoc>('content');
   }
 
+  async pushSubscriptions(): Promise<Collection<PushSubscriptionDoc>> {
+    return (await this.db()).collection<PushSubscriptionDoc>('pushSubscriptions');
+  }
+
   /**
    * Indexes, created once per process.
    *
@@ -295,6 +312,12 @@ export class MongoService implements OnModuleDestroy {
          */
         { key: { googleIdHash: 1 }, name: 'googleIdHash', unique: true, sparse: true },
       ]);
+
+      // Not for the fan-out send (that reads every document) — for looking up
+      // or clearing one racer's subscriptions without a full collection scan.
+      await db
+        .collection('pushSubscriptions')
+        .createIndexes([{ key: { userId: 1 }, name: 'userId' }]);
     } catch (error) {
       // A read-only user or a race with another instance shouldn't take the
       // app down — the queries still work, just less efficiently.
