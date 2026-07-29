@@ -363,7 +363,7 @@ function PodiumCard({
   const share = leaderValue > 0 ? (entry.primary / leaderValue) * 100 : 0;
 
   return (
-    <Link to={`/racer/${entry.userId}`} className={`group block transition-transform ${lift}`}>
+    <Link to={`/racer/${entry.userId}`} className={`group block min-w-0 transition-transform ${lift}`}>
       <Panel
         accent={medal}
         lit
