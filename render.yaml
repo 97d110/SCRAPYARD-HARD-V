@@ -106,6 +106,8 @@ services:
       # a dashboard setting nobody remembers changing.
       - key: GROQ_MODEL
         value: openai/gpt-oss-120b
+      - key: GROQ_TRANSCRIBE_MODEL
+        value: whisper-large-v3-turbo
 
       # --- Behaviour -------------------------------------------------------
       - key: SCRAPYARD_TIMEZONE

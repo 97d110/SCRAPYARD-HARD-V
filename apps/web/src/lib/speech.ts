@@ -1,225 +1,196 @@
 /**
- * Hebrew speech capture, via the browser's own Web Speech API.
+ * Microphone capture, for spoken race entry.
  *
- * Deliberately thin: it starts listening, streams back interim text so the UI
- * can show something happening, and hands over a final transcript. All the
- * understanding happens server-side (see `voice.service.ts`) — this only turns
- * sound into words.
+ * Records audio and hands back a data URL. The transcription happens server-side
+ * (Groq Whisper — see `voice.service.ts`); this file only deals with the mic.
  *
- * Three things worth knowing before relying on it:
- *
- *   1. Support is uneven. Chrome and Edge implement it; Firefox does not, and
- *      Safari's support has historically been partial and inconsistent. Hence
- *      `speechSupported()` — callers hide the mic rather than offering a button
- *      that silently fails.
- *
- *   2. "Client-side" is a half-truth. Chrome's implementation streams audio to
- *      Google's servers for recognition; it is not on-device. It avoids OUR
- *      server and our bandwidth, which was the point, but it isn't private.
- *
- *   3. The language is fixed before listening starts and can't be switched
- *      mid-sentence. Pinned to Hebrew here by choice. A sentence that mixes
- *      Hebrew and English ("עמית ניצח with 16") will mangle the English half —
- *      that's inherent to the API, not something this wrapper can paper over.
- *      Groq's Whisper models handle mixed speech and are on the same free tier
- *      if this ever becomes the thing that annoys people.
+ * It used to use the browser's Web Speech API instead, which was a mistake worth
+ * recording: that API is not on-device. Chrome streams audio to Google and
+ * reports a bare `network` error when it can't reach them, which is what happens
+ * behind a corporate proxy, in Chromium builds shipped without Google's speech
+ * backend, and in any browser with the endpoint blocked. Firefox doesn't
+ * implement it at all. Uploading the audio ourselves costs a few tens of
+ * kilobytes and removes every one of those failure modes — plus it handles
+ * sentences that mix Hebrew and English, which a single fixed `lang` could not.
  */
 
-/** Long enough for four racers and their scores; short enough to not hang open. */
-const MAX_LISTEN_MS = 20_000;
+/** Long enough for four racers and their scores; short enough to bound the upload. */
+const MAX_RECORD_MS = 20_000;
 
-/*
- * Minimal hand-rolled types. TypeScript's bundled DOM library doesn't declare
- * SpeechRecognition (it's still a draft spec), and `webkitSpeechRecognition`
- * never will be. Declaring only what's used here beats pulling in a dependency
- * or casting to `any` at every call site.
+/**
+ * Preference order. Opus in WebM is small and universally accepted where it
+ * exists; Safari only does MP4/AAC. An empty string means "let the browser
+ * choose", which is the last resort rather than the default because the result
+ * is then unpredictable and may not be a container the provider accepts.
  */
-interface SpeechRecognitionAlternativeLike {
-  transcript: string;
-}
-interface SpeechRecognitionResultLike {
-  readonly length: number;
-  isFinal: boolean;
-  [index: number]: SpeechRecognitionAlternativeLike;
-}
-interface SpeechRecognitionResultListLike {
-  readonly length: number;
-  [index: number]: SpeechRecognitionResultLike;
-}
-interface SpeechRecognitionEventLike {
-  resultIndex: number;
-  results: SpeechRecognitionResultListLike;
-}
-interface SpeechRecognitionErrorEventLike {
-  error: string;
-}
-interface SpeechRecognitionLike {
-  lang: string;
-  continuous: boolean;
-  interimResults: boolean;
-  maxAlternatives: number;
-  start(): void;
-  stop(): void;
-  abort(): void;
-  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
-  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
-  onend: (() => void) | null;
-}
-type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
+const PREFERRED_TYPES = [
+  'audio/webm;codecs=opus',
+  'audio/webm',
+  'audio/mp4',
+  'audio/mpeg',
+  '',
+];
 
-function constructor(): SpeechRecognitionCtor | null {
-  if (typeof window === 'undefined') return null;
-  const scope = window as unknown as {
-    SpeechRecognition?: SpeechRecognitionCtor;
-    webkitSpeechRecognition?: SpeechRecognitionCtor;
-  };
-  return scope.SpeechRecognition ?? scope.webkitSpeechRecognition ?? null;
-}
-
-/** False on Firefox and anywhere else without the API — hide the mic entirely. */
+/** False where there's no recorder or no mic API at all — hide the button. */
 export function speechSupported(): boolean {
-  return constructor() !== null;
+  return (
+    typeof window !== 'undefined' &&
+    typeof MediaRecorder !== 'undefined' &&
+    Boolean(navigator.mediaDevices?.getUserMedia)
+  );
 }
 
-export interface SpeechSession {
-  /** Ask for the final result now. Resolves the original promise. */
+function pickMimeType(): string {
+  for (const type of PREFERRED_TYPES) {
+    if (type === '') return '';
+    if (MediaRecorder.isTypeSupported(type)) return type;
+  }
+  return '';
+}
+
+export interface RecordingSession {
+  /** Finish and resolve with the recording. */
   stop(): void;
-  /** Throw the session away without producing a transcript. */
+  /** Abandon it — releases the mic, rejects the promise. */
   cancel(): void;
 }
 
-export interface ListenCallbacks {
-  /** Fires repeatedly with the best guess so far, so the UI can show progress. */
-  onInterim?: (text: string) => void;
-}
-
 /**
- * Human-readable reasons, because the raw API codes are terse and a couple of
- * them mean something the person can actually act on.
- */
-function describeError(code: string): string {
-  switch (code) {
-    case 'not-allowed':
-    case 'service-not-allowed':
-      return 'Microphone access was blocked — allow it in your browser settings.';
-    case 'no-speech':
-      return "Didn't catch anything — try again a bit closer to the mic.";
-    case 'audio-capture':
-      return 'No microphone found.';
-    case 'network':
-      return 'Speech recognition needs a network connection.';
-    case 'aborted':
-      return 'Cancelled.';
-    default:
-      return `Speech recognition failed (${code}).`;
-  }
-}
-
-/**
- * Listen once, resolving with the final transcript.
+ * Turns the recorded blob into `data:audio/webm;base64,…`.
  *
- * Returns the session synchronously alongside the promise so the caller can
- * wire up a stop button before anything has been said — awaiting first would
- * mean the session object arrives only after it's already over.
+ * FileReader rather than manual base64: it handles the chunking for large
+ * buffers, where a naive `btoa(String.fromCharCode(...bytes))` blows the call
+ * stack on anything more than a few hundred kilobytes.
  */
-export function listenForHebrew(callbacks: ListenCallbacks = {}): {
-  session: SpeechSession;
-  result: Promise<string>;
-} {
-  const Ctor = constructor();
-  if (!Ctor) {
-    return {
-      session: { stop: () => {}, cancel: () => {} },
-      result: Promise.reject(new Error('Speech recognition is not supported in this browser.')),
-    };
-  }
-
-  const recognition = new Ctor();
-  recognition.lang = 'he-IL';
-  // One utterance, not a running dictation: someone says the results and stops.
-  recognition.continuous = false;
-  recognition.interimResults = true;
-  recognition.maxAlternatives = 1;
-
-  let finalText = '';
-  let settled = false;
-  let cancelled = false;
-
-  const result = new Promise<string>((resolve, reject) => {
-    // Never leave the mic open indefinitely — a forgotten session is a hot mic.
-    const timer = window.setTimeout(() => {
-      try {
-        recognition.stop();
-      } catch {
-        // Already stopped; onend still fires and settles the promise.
-      }
-    }, MAX_LISTEN_MS);
-
-    const finish = (settle: () => void) => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timer);
-      settle();
-    };
-
-    recognition.onresult = (event) => {
-      let interim = '';
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const alternative = event.results[i][0];
-        if (!alternative) continue;
-        if (event.results[i].isFinal) finalText += alternative.transcript;
-        else interim += alternative.transcript;
-      }
-      const preview = (finalText + interim).trim();
-      if (preview) callbacks.onInterim?.(preview);
-    };
-
-    recognition.onerror = (event) => {
-      // A no-speech error after something was already heard isn't a failure —
-      // it's just the trailing silence that ended the sentence.
-      if (event.error === 'no-speech' && finalText.trim()) return;
-      if (cancelled) return;
-      finish(() => reject(new Error(describeError(event.error))));
-    };
-
-    recognition.onend = () => {
-      if (cancelled) {
-        finish(() => reject(new Error('Cancelled.')));
+function toDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read the recording.'));
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== 'string') {
+        reject(new Error('Could not read the recording.'));
         return;
       }
-      const text = finalText.trim();
-      finish(() =>
-        text
-          ? resolve(text)
-          : reject(new Error("Didn't catch anything — try again a bit closer to the mic.")),
-      );
+      resolve(result);
     };
-
-    try {
-      recognition.start();
-    } catch (error) {
-      finish(() =>
-        reject(error instanceof Error ? error : new Error('Could not start listening.')),
-      );
-    }
+    reader.readAsDataURL(blob);
   });
+}
+
+function describeMicError(error: unknown): string {
+  const name = error instanceof Error ? error.name : '';
+  switch (name) {
+    case 'NotAllowedError':
+    case 'SecurityError':
+      return 'Microphone access was blocked — allow it in your browser settings.';
+    case 'NotFoundError':
+    case 'OverconstrainedError':
+      return 'No microphone found.';
+    case 'NotReadableError':
+      return 'The microphone is in use by something else.';
+    default:
+      return 'Could not start recording.';
+  }
+}
+
+/**
+ * Record once, resolving with a data URL.
+ *
+ * The session is returned synchronously alongside the promise so a stop button
+ * can be wired up before anything has been said — awaiting first would hand it
+ * over only after the recording was already finished.
+ */
+export function recordAudio(): {
+  session: RecordingSession;
+  result: Promise<string>;
+} {
+  let stopRecorder: (() => void) | null = null;
+  let cancelled = false;
+  let started = false;
+
+  const result = (async (): Promise<string> => {
+    if (!speechSupported()) {
+      throw new Error('Recording is not supported in this browser.');
+    }
+
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (error) {
+      throw new Error(describeMicError(error));
+    }
+
+    // Whatever happens next, the mic light must go out.
+    const release = () => stream.getTracks().forEach((track) => track.stop());
+
+    // Cancelled during the permission prompt — don't open a recorder at all.
+    if (cancelled) {
+      release();
+      throw new Error('Cancelled.');
+    }
+
+    const mimeType = pickMimeType();
+    let recorder: MediaRecorder;
+    try {
+      recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    } catch {
+      release();
+      throw new Error('Could not start recording.');
+    }
+
+    const chunks: Blob[] = [];
+    started = true;
+
+    return await new Promise<string>((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        if (recorder.state !== 'inactive') recorder.stop();
+      }, MAX_RECORD_MS);
+
+      stopRecorder = () => {
+        if (recorder.state !== 'inactive') recorder.stop();
+      };
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunks.push(event.data);
+      };
+
+      recorder.onerror = () => {
+        window.clearTimeout(timer);
+        release();
+        reject(new Error('Recording failed.'));
+      };
+
+      recorder.onstop = () => {
+        window.clearTimeout(timer);
+        release();
+        if (cancelled) {
+          reject(new Error('Cancelled.'));
+          return;
+        }
+        const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'audio/webm' });
+        if (blob.size === 0) {
+          reject(new Error("Didn't catch anything — try again, a bit closer to the mic."));
+          return;
+        }
+        toDataUrl(blob).then(resolve, reject);
+      };
+
+      // A short timeslice means `ondataavailable` fires during the recording
+      // rather than only at the end, so a browser that drops the final buffer
+      // still leaves us with something usable.
+      recorder.start(250);
+    });
+  })();
 
   return {
     session: {
-      stop: () => {
-        try {
-          recognition.stop();
-        } catch {
-          // Already stopping — onend settles it either way.
-        }
-      },
+      stop: () => stopRecorder?.(),
       cancel: () => {
         cancelled = true;
-        try {
-          recognition.abort();
-        } catch {
-          // Nothing to abort.
-        }
+        // Before the recorder exists, the flag alone is enough — the async body
+        // checks it after the permission prompt resolves.
+        if (started) stopRecorder?.();
       },
     },
     result,

@@ -33,7 +33,25 @@ import type { PublicUser, VoiceDraft, VoiceDraftRow } from '@scrapyard/shared';
 
 const DEFAULT_BASE_URL = 'https://api.groq.com/openai/v1';
 const DEFAULT_MODEL = 'openai/gpt-oss-120b';
+/**
+ * Speech-to-text. Replaced the browser's own Web Speech API, which turned out
+ * to be unusable in practice: Chrome's implementation isn't on-device at all —
+ * it streams audio to Google — so it fails with a bare "network" error behind a
+ * corporate proxy, in Chromium builds shipped without Google's backend, and in
+ * Firefox where it doesn't exist. This works in every browser, and handles the
+ * Hebrew-English mixing that a single fixed `lang` structurally cannot.
+ */
+const DEFAULT_TRANSCRIBE_MODEL = 'whisper-large-v3-turbo';
 const TIMEOUT_MS = 20_000;
+/** Transcription uploads audio and waits on a model, so it needs more room. */
+const TRANSCRIBE_TIMEOUT_MS = 45_000;
+
+/**
+ * Roughly a minute of Opus. Generous for one sentence of race results, and far
+ * below Mongo's document cap — though nothing here is stored, this bound is
+ * about not shipping a surprise to the provider or to Render's bandwidth.
+ */
+const MAX_AUDIO_BYTES = 2_000_000;
 
 /** A race tops out at four cars; mirrors MAX_FIELD in ScoresService. */
 const MAX_FINISHERS = 4;
@@ -53,16 +71,125 @@ export class VoiceService {
   private readonly apiKey?: string;
   private readonly baseUrl: string;
   private readonly model: string;
+  private readonly transcribeModel: string;
   private readonly configured: boolean;
 
   constructor(private readonly users: UsersService) {
     this.apiKey = process.env.GROQ_API_KEY;
     this.baseUrl = (process.env.GROQ_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, '');
     this.model = process.env.GROQ_MODEL || DEFAULT_MODEL;
+    this.transcribeModel = process.env.GROQ_TRANSCRIBE_MODEL || DEFAULT_TRANSCRIBE_MODEL;
     this.configured = Boolean(this.apiKey);
 
     if (!this.configured) {
       this.logger.warn('GROQ_API_KEY not set — voice race entry is disabled');
+    }
+  }
+
+  /**
+   * Audio in, race draft out — transcribe then extract, in one round trip.
+   *
+   * Kept as a single call rather than two because the transcript on its own is
+   * never the thing anyone wants; it comes back inside the draft anyway, so the
+   * UI can still show what was heard when a name goes unmatched.
+   */
+  async draftFromAudio(audioDataUrl: string): Promise<VoiceDraft> {
+    if (!this.configured) {
+      throw new BadRequestException('Voice entry is not configured on this server');
+    }
+    const { bytes, mimeType } = this.decodeAudio(audioDataUrl);
+    const roster = await this.users.findAll();
+    if (roster.length === 0) {
+      throw new BadRequestException('No racers on the roster yet');
+    }
+
+    const transcript = await this.transcribe(bytes, mimeType, roster);
+    if (!transcript.trim()) {
+      throw new BadRequestException("Didn't catch anything — try again, a bit closer to the mic.");
+    }
+    return this.draftFromTranscript(transcript);
+  }
+
+  /**
+   * `data:audio/webm;codecs=opus;base64,…` — the same shape the avatar upload
+   * already uses, which is why this arrives as JSON rather than multipart: no
+   * new dependency, and one established pattern for "a file, inline".
+   */
+  private decodeAudio(dataUrl: string): { bytes: Buffer; mimeType: string } {
+    const match = /^data:(audio\/[a-z0-9.+-]+(?:;[^,]*)?);base64,([A-Za-z0-9+/=]+)$/i.exec(
+      dataUrl.trim(),
+    );
+    if (!match) throw new BadRequestException('That audio format is not supported');
+
+    const bytes = Buffer.from(match[2], 'base64');
+    if (bytes.length === 0) throw new BadRequestException('The recording was empty');
+    if (bytes.length > MAX_AUDIO_BYTES) {
+      throw new BadRequestException('That recording is too long — keep it to about a minute');
+    }
+    // Strip codec parameters: the provider wants a plain content type.
+    return { bytes, mimeType: match[1].split(';')[0] };
+  }
+
+  private async transcribe(
+    bytes: Buffer,
+    mimeType: string,
+    roster: PublicUser[],
+  ): Promise<string> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TRANSCRIBE_TIMEOUT_MS);
+
+    try {
+      const form = new FormData();
+      // The extension has to look plausible for the container or the provider
+      // rejects the upload; derived from the browser's own mime type.
+      const extension = mimeType.includes('mp4') || mimeType.includes('mpeg') ? 'mp4' : 'webm';
+      form.append('file', new Blob([new Uint8Array(bytes)], { type: mimeType }), `race.${extension}`);
+      form.append('model', this.transcribeModel);
+      // Pinned to Hebrew rather than auto-detected: one sentence of names and
+      // numbers is thin evidence for language detection, and guessing wrong
+      // mangles the whole thing.
+      form.append('language', 'he');
+      form.append('temperature', '0');
+      /*
+       * Whisper accepts a prompt to bias its vocabulary, and the roster's Hebrew
+       * aliases are exactly the right thing to bias it toward — proper nouns are
+       * what it would otherwise most likely mangle, and a mangled name is a name
+       * the extractor then can't match. The aliases earn their keep twice here.
+       */
+      const names = roster.flatMap((user) => user.hebrewAliases).slice(0, 60);
+      if (names.length > 0) {
+        form.append('prompt', `שמות הנהגים: ${names.join(', ')}`);
+      }
+
+      const response = await fetch(`${this.baseUrl}/audio/transcriptions`, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { Authorization: `Bearer ${this.apiKey}` },
+        body: form,
+      });
+
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        this.logger.error(`Transcription returned ${response.status}: ${body.slice(0, 500)}`);
+        if (response.status === 429) {
+          throw new ServiceUnavailableException('Voice entry is busy right now — try again shortly');
+        }
+        throw new ServiceUnavailableException('Could not transcribe that recording');
+      }
+
+      const payload = (await response.json()) as { text?: string };
+      return typeof payload.text === 'string' ? payload.text : '';
+    } catch (error) {
+      if (error instanceof BadRequestException || error instanceof ServiceUnavailableException) {
+        throw error;
+      }
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new ServiceUnavailableException('Transcription timed out — try a shorter recording');
+      }
+      this.logger.error(`Transcription failed: ${error instanceof Error ? error.message : error}`);
+      throw new ServiceUnavailableException('Could not transcribe that recording');
+    } finally {
+      clearTimeout(timer);
     }
   }
 

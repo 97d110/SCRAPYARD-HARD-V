@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { Avatar, Label, NeonButton, Panel, withGlow } from './ui/primitives';
 import { api } from '../lib/api';
-import { listenForHebrew, speechSupported, type SpeechSession } from '../lib/speech';
+import { recordAudio, speechSupported, type RecordingSession } from '../lib/speech';
 import type { GameResultInput, KillEventInput, MetricDef, PublicUser } from '@scrapyard/shared';
 
 /**
@@ -141,12 +141,11 @@ export function AddScoreOverlay({
    */
   const [voiceReady, setVoiceReady] = useState<boolean | null>(null);
   const [listening, setListening] = useState(false);
-  const [interim, setInterim] = useState('');
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [voiceNote, setVoiceNote] = useState<string | null>(null);
   const [heardBy, setHeardBy] = useState<Record<string, string>>({});
-  const sessionRef = useRef<SpeechSession | null>(null);
+  const sessionRef = useRef<RecordingSession | null>(null);
 
   /**
    * Close with the collapse animation: mark closing, then unmount (via the
@@ -174,7 +173,6 @@ export function AddScoreOverlay({
     setDragIndex(null);
     setClosing(false);
     setListening(false);
-    setInterim('');
     setVoiceBusy(false);
     setVoiceError(null);
     setVoiceNote(null);
@@ -278,20 +276,18 @@ export function AddScoreOverlay({
     if (phase !== 'idle' || listening || voiceBusy) return;
     setVoiceError(null);
     setVoiceNote(null);
-    setInterim('');
     setListening(true);
 
-    let transcript: string;
+    let audio: string;
     try {
-      const { session, result } = listenForHebrew({ onInterim: setInterim });
+      const { session, result } = recordAudio();
       sessionRef.current = session;
-      transcript = await result;
+      audio = await result;
     } catch (caught) {
       setListening(false);
-      setInterim('');
       sessionRef.current = null;
       // "Cancelled." is the person's own doing — not worth an error message.
-      const message = caught instanceof Error ? caught.message : 'Could not listen.';
+      const message = caught instanceof Error ? caught.message : 'Could not record.';
       if (message !== 'Cancelled.') setVoiceError(message);
       return;
     }
@@ -300,7 +296,7 @@ export function AddScoreOverlay({
     sessionRef.current = null;
     setVoiceBusy(true);
     try {
-      const draft = await api.voice.draft(transcript);
+      const draft = await api.voice.draft(audio);
 
       if (draft.finishers.length === 0) {
         setVoiceError(
@@ -331,7 +327,6 @@ export function AddScoreOverlay({
       setVoiceError(caught instanceof Error ? caught.message : 'Could not read that.');
     } finally {
       setVoiceBusy(false);
-      setInterim('');
     }
   };
 
@@ -593,7 +588,7 @@ export function AddScoreOverlay({
               ) : listening ? (
                 <>
                   <Square size={11} className="animate-pulse" />
-                  Listening — tap when done
+                  Recording — tap when done
                 </>
               ) : (
                 <>
@@ -603,12 +598,12 @@ export function AddScoreOverlay({
               )}
             </button>
 
-            {/* Live transcript: proof it's hearing something, and whose fault it is when it isn't. */}
-            {listening && interim && (
-              <p dir="rtl" className="truncate text-right text-[0.7rem] text-[var(--text-dim)]">
-                {interim}
-              </p>
-            )}
+            {/*
+              No live transcript any more: transcription happens server-side
+              once recording stops, so there's nothing to show mid-sentence.
+              What's heard surfaces on the grid rows instead, which is where it
+              actually matters.
+            */}
             {voiceError && <p className="text-[0.65rem] text-danger">{voiceError}</p>}
             {voiceNote && <p className="text-[0.65rem] text-[#FFB020]">{voiceNote}</p>}
           </>

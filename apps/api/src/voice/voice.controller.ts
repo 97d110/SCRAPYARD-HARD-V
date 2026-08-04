@@ -6,13 +6,15 @@ import type { VoiceDraft } from '@scrapyard/shared';
 
 export class VoiceDraftDto {
   /**
-   * The browser's transcript. Bounded because it goes into a prompt: a race
-   * summary is one sentence, and anything longer is either a mistake or someone
-   * probing. The service enforces its own limit too — this is the cheap
-   * rejection that happens before any work.
+   * The recording, as a `data:audio/...;base64,…` URL — the same inline-file
+   * shape the avatar upload uses, so there's no multipart plumbing to add.
+   *
+   * Bounded at roughly 2.7MB of base64 (~2MB of audio, about a minute of Opus).
+   * The service re-checks the decoded length; this is the cheap rejection that
+   * happens before anything is decoded at all.
    */
-  @IsString() @MinLength(1) @MaxLength(600)
-  transcript!: string;
+  @IsString() @MinLength(1) @MaxLength(2_800_000)
+  audio!: string;
 }
 
 /**
@@ -37,9 +39,9 @@ export class VoiceController {
     return { available: this.voice.available() };
   }
 
-  /** Transcript in, draft form fields out. Records nothing. */
+  /** Recording in, draft form fields out. Records nothing. */
   @Post('draft')
   async draft(@Body() dto: VoiceDraftDto): Promise<VoiceDraft> {
-    return this.voice.draftFromTranscript(dto.transcript);
+    return this.voice.draftFromAudio(dto.audio);
   }
 }

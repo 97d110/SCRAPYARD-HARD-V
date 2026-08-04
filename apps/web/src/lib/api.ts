@@ -177,14 +177,15 @@ export const api = {
     /** False when GROQ_API_KEY isn't set — the overlay hides the mic entirely. */
     status: () => request<{ available: boolean }>('/voice/status'),
     /**
-     * Hebrew transcript in, draft form fields out. Records nothing: the caller
-     * drops the result into the grid, where it's edited and submitted by hand
-     * through the normal path.
+     * A recording in, draft form fields out — transcription and extraction both
+     * happen server-side in one round trip. Records nothing: the caller drops
+     * the result into the grid, where it's edited and submitted by hand through
+     * the normal path.
      */
-    draft: (transcript: string) =>
+    draft: (audio: string) =>
       request<VoiceDraft>('/voice/draft', {
         method: 'POST',
-        body: JSON.stringify({ transcript }),
+        body: JSON.stringify({ audio }),
       }),
   },
 
