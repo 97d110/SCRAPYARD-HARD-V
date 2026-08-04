@@ -148,7 +148,7 @@ export class ScoresController {
       id: result.winner.id,
       displayName: result.winner.displayName,
       avatarUrl: result.winner.avatarUrl,
-      accentColor: result.winner.accentColor,
+      raceColor: result.winner.raceColor,
       allTime: result.allTime,
     };
 

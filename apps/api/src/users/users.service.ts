@@ -39,24 +39,20 @@ export const RACERS = [
   'Mr. Shnek',
 ] as const;
 
-/** Neon accents a racer can pick, all tuned to sit on the dark backdrop. */
-export const ACCENT_COLORS = [
-  '#FF6A00',
-  '#FFB020',
-  '#00E5FF',
-  '#FF2D95',
-  '#B6FF3C',
-  '#7C5CFF',
-  '#FF3B30',
-  '#00FFA3',
-] as const;
-
 /**
- * The four in-game car colors. Distinct from ACCENT_COLORS above: that's the
- * racer's neon theme across the UI, this is which car they actually drive.
- * Duplicates across the roster are fine — four colors, more racers than that.
+ * The four in-game car colors — a racer's car AND their colour throughout the
+ * UI. There used to be a second free-hex `accentColor` for theming; two colours
+ * on one profile read as the same setting twice, and only this one means
+ * anything in the game.
+ *
+ * Duplicates across the roster are expected and allowed: four colours cannot go
+ * around eight racers, so two people who both drive green look alike. That's the
+ * accepted cost of the colour matching the car.
  */
 export const RACE_COLORS = ['blue', 'red', 'green', 'yellow'] as const;
+
+/** Everyone has a colour. Green is simply the one nobody had to choose. */
+export const DEFAULT_RACE_COLOR: RaceColor = 'green';
 
 /** Keeps one loud voice from crowding the extractor's prompt. */
 const MAX_ALIASES = 12;
@@ -74,9 +70,7 @@ export interface ProfilePatch {
   avatarUrl?: string;
   tagline?: string;
   favoriteRacer?: string;
-  accentColor?: string;
-  /** null clears the pick — "I don't have a usual color". */
-  raceColor?: RaceColor | null;
+  raceColor?: RaceColor;
   hebrewAliases?: string[];
 }
 
@@ -282,11 +276,10 @@ export class UsersService {
       displayName: input.fullName || email.split('@')[0],
       tagline: 'No health, no levelling, no brakes.',
       favoriteRacer: RACERS[Math.floor(Math.random() * RACERS.length)],
-      accentColor: ACCENT_COLORS[Math.floor(Math.random() * ACCENT_COLORS.length)],
-      // Both deliberately left empty rather than guessed: a wrong "usual
-      // colour" is noise, and transliterating a Google name into Hebrew
-      // automatically would seed the matcher with plausible-but-wrong spellings.
-      raceColor: null,
+      raceColor: DEFAULT_RACE_COLOR,
+      // Left empty rather than guessed: transliterating a Google name into
+      // Hebrew automatically would seed the matcher with plausible-but-wrong
+      // spellings, which is worse than visibly unconfigured.
       hebrewAliases: [],
       createdAt: now,
     };
@@ -362,10 +355,9 @@ export class UsersService {
       avatarUrl: '',
       tagline: 'Signed up in absentia.',
       favoriteRacer: RACERS[Math.floor(Math.random() * RACERS.length)],
-      accentColor: ACCENT_COLORS[Math.floor(Math.random() * ACCENT_COLORS.length)],
-      // An admin can fill these in straight away via the roster editor, which
-      // is the point: voice entry works for this racer before they ever sign in.
-      raceColor: null,
+      raceColor: DEFAULT_RACE_COLOR,
+      // An admin can set these straight away via the roster editor, which is
+      // the point: voice entry works for this racer before they ever sign in.
       hebrewAliases: [],
       createdAt: now,
       updatedAt: now,
@@ -448,17 +440,9 @@ export class UsersService {
       update.favoriteRacer = patch.favoriteRacer;
     }
 
-    if (patch.accentColor !== undefined) {
-      const color = patch.accentColor.trim().toUpperCase();
-      if (!/^#[0-9A-F]{6}$/.test(color)) {
-        throw new BadRequestException('Accent must be a #RRGGBB hex colour');
-      }
-      update.accentColor = color;
-    }
-
     if (patch.raceColor !== undefined) {
-      if (patch.raceColor !== null && !RACE_COLORS.includes(patch.raceColor)) {
-        throw new BadRequestException('Race colour must be blue, red, green or yellow');
+      if (!RACE_COLORS.includes(patch.raceColor)) {
+        throw new BadRequestException('Colour must be blue, red, green or yellow');
       }
       update.raceColor = patch.raceColor;
     }
@@ -539,9 +523,9 @@ export class UsersService {
       googleAvatarUrl: user.googleAvatarUrl,
       tagline: user.tagline,
       favoriteRacer: user.favoriteRacer,
-      accentColor: user.accentColor,
-      // `?? null` / `?? []` cover documents written before these fields existed.
-      raceColor: user.raceColor ?? null,
+      // The fallbacks cover documents written before these fields existed —
+      // a racer created before the colour merge has neither.
+      raceColor: user.raceColor ?? DEFAULT_RACE_COLOR,
       hebrewAliases: user.hebrewAliases ?? [],
       createdAt: user.createdAt,
       claimed: Boolean(user.googleId),

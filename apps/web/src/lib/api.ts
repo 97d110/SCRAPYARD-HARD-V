@@ -144,7 +144,7 @@ export const api = {
 
   // --- users --------------------------------------------------------------
   users: () => request<PublicUser[]>('/users'),
-  profileOptions: () => request<{ racers: string[]; accents: string[] }>('/users/options'),
+  profileOptions: () => request<{ racers: string[] }>('/users/options'),
   profile: (id: string) => request<ProfileBundle>(`/users/${encodeURIComponent(id)}`),
   updateProfile: (id: string, patch: Record<string, unknown>) =>
     request<PublicUser>(`/users/${encodeURIComponent(id)}`, {

@@ -12,6 +12,7 @@ import { ApiError, api } from '../lib/api';
 import { live } from '../lib/live';
 import { checkForServiceWorkerUpdate } from '../lib/pwa';
 import type { CurrentBoards, GameResultInput, KillEventInput, PublicUser, Pun } from '@scrapyard/shared';
+import { RACE_COLOR_HEX } from '../lib/raceColors';
 
 /**
  * One store for the whole app.
@@ -195,7 +196,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // The game's own id, so two celebrations landing in the same
         // millisecond still remount the animation instead of sharing a run.
         id: result.game.id,
-        accent: result.winner.accentColor,
+        accent: RACE_COLOR_HEX[result.winner.raceColor],
         caption: `${result.winner.displayName} — ${result.winner.allTime} ${
           result.winner.allTime === 1 ? 'win' : 'wins'
         }`,
@@ -321,7 +322,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                     ...prev,
                     celebration: {
                       id: frame.gameId,
-                      accent: frame.winner.accentColor,
+                      accent: RACE_COLOR_HEX[frame.winner.raceColor],
                       caption: `${frame.winner.displayName} — ${frame.winner.allTime} ${
                         frame.winner.allTime === 1 ? 'win' : 'wins'
                       }`,

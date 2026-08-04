@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowDown, ArrowUp, ArrowUpDown, Crown, Trophy } from 'lucide-react';
 import { Avatar, Label, Panel } from './ui/primitives';
 import type { LeaderboardEntry, MetricColumn, Scoreboard } from '@scrapyard/shared';
+import { RACE_COLOR_HEX } from '../lib/raceColors';
 
 /**
  * The leaderboard. Podium cards for the top three by in-game score, then a
@@ -200,7 +201,7 @@ export function LeaderboardTable({
                   src={entry.avatarUrl}
                   name={entry.displayName}
                   size={22}
-                  accent={entry.accentColor}
+                  accent={RACE_COLOR_HEX[entry.raceColor]}
                 />
                 <span className="max-w-[10rem] truncate text-xs text-[var(--text-dim)]">
                   {entry.displayName}
@@ -302,7 +303,7 @@ function SortableTable({
             className={`grid items-center border-b border-hairline/60 transition-colors last:border-b-0 hover:bg-white/[0.04] ${
               isMe ? 'bg-blaze/[0.07]' : ''
             }`}
-            style={{ gridTemplateColumns: template, minWidth, ['--glow' as string]: entry.accentColor }}
+            style={{ gridTemplateColumns: template, minWidth, ['--glow' as string]: RACE_COLOR_HEX[entry.raceColor] }}
           >
             <span className="px-2 py-3 text-center font-display text-xs font-black tabular-nums text-[var(--text-dim)] sm:text-sm">
               {index + 1}
@@ -313,7 +314,7 @@ function SortableTable({
                 src={entry.avatarUrl}
                 name={entry.displayName}
                 size={32}
-                accent={entry.accentColor}
+                accent={RACE_COLOR_HEX[entry.raceColor]}
               />
               <span className="min-w-0">
                 <span className="block truncate font-display text-[0.75rem] font-bold uppercase tracking-wide text-white transition group-hover:neon-soft sm:text-[0.82rem]">
@@ -337,7 +338,7 @@ function SortableTable({
                       ? 'text-base font-black text-white'
                       : 'text-sm font-bold text-[var(--text-dim)]'
                   }`}
-                  style={active ? { textShadow: `0 0 14px ${entry.accentColor}` } : undefined}
+                  style={active ? { textShadow: `0 0 14px ${RACE_COLOR_HEX[entry.raceColor]}` } : undefined}
                 >
                   {formatMetric(value, column.id)}
                 </span>
@@ -401,7 +402,7 @@ function PodiumCard({
             src={entry.avatarUrl}
             name={entry.displayName}
             size={slot === 1 ? 68 : 56}
-            accent={entry.accentColor}
+            accent={RACE_COLOR_HEX[entry.raceColor]}
             rank={entry.rank}
           />
           <div className="min-w-0 flex-1">

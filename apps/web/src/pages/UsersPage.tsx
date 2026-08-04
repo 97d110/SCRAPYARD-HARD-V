@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowUpDown, Search } from 'lucide-react';
 import { useApp } from '../state/AppStore';
 import { Avatar, Label, Panel, Segmented } from '../components/ui/primitives';
+import { RACE_COLOR_HEX } from '../lib/raceColors';
 
 type SortKey = 'wins' | 'name' | 'newest';
 
@@ -106,7 +107,7 @@ export function UsersPage() {
                     src={user.avatarUrl}
                     name={user.displayName}
                     size={36}
-                    accent={user.accentColor}
+                    accent={RACE_COLOR_HEX[user.raceColor]}
                   />
                   <span className="min-w-0">
                     <span className="block truncate font-display text-sm font-bold uppercase tracking-wide text-white">
@@ -138,14 +139,14 @@ export function UsersPage() {
                       className="block h-full"
                       style={{
                         width: `${(user.scores.allTime / maxWins) * 100}%`,
-                        background: `linear-gradient(90deg, ${user.accentColor}, transparent)`,
-                        boxShadow: `0 0 12px ${user.accentColor}`,
+                        background: `linear-gradient(90deg, ${RACE_COLOR_HEX[user.raceColor]}, transparent)`,
+                        boxShadow: `0 0 12px ${RACE_COLOR_HEX[user.raceColor]}`,
                       }}
                     />
                   </span>
                   <span
                     className="stat-number w-10 text-right text-lg"
-                    style={{ color: '#fff', textShadow: `0 0 16px ${user.accentColor}` }}
+                    style={{ color: '#fff', textShadow: `0 0 16px ${RACE_COLOR_HEX[user.raceColor]}` }}
                   >
                     {user.scores.allTime}
                   </span>
@@ -159,7 +160,7 @@ export function UsersPage() {
             {rows.map((user, i) => (
               <Link key={user.id} to={`/racer/${user.id}`}>
                 <Panel
-                  accent={user.accentColor}
+                  accent={RACE_COLOR_HEX[user.raceColor]}
                   tight
                   className={`flex items-center gap-3 p-4 ${
                     user.id === me?.id ? 'ring-1 ring-blaze/40' : ''
@@ -172,7 +173,7 @@ export function UsersPage() {
                     src={user.avatarUrl}
                     name={user.displayName}
                     size={42}
-                    accent={user.accentColor}
+                    accent={RACE_COLOR_HEX[user.raceColor]}
                   />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-display text-[0.8rem] font-bold uppercase tracking-wide text-white">
@@ -184,7 +185,7 @@ export function UsersPage() {
                   </span>
                   <span
                     className="stat-number shrink-0 text-xl"
-                    style={{ color: '#fff', textShadow: `0 0 16px ${user.accentColor}` }}
+                    style={{ color: '#fff', textShadow: `0 0 16px ${RACE_COLOR_HEX[user.raceColor]}` }}
                   >
                     {user.scores.allTime}
                   </span>

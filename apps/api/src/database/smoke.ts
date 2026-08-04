@@ -326,10 +326,11 @@ async function main(): Promise<void> {
   );
   const edited = await call('PATCH', '/users/seed-dana', {
     token: racerToken,
-    body: { displayName: 'Dana K.', tagline: 'Brakes are for quitters', accentColor: '#B6FF3C' },
+    body: { displayName: 'Dana K.', tagline: 'Brakes are for quitters', raceColor: 'blue' },
   });
   check('can edit your own profile', edited.status === 200 && edited.body.displayName === 'Dana K.', edited.body);
-  check('rejects a bad accent colour', (await call('PATCH', '/users/seed-dana', { token: racerToken, body: { accentColor: 'purple' } })).status === 400);
+  check('rejects an off-palette colour', (await call('PATCH', '/users/seed-dana', { token: racerToken, body: { raceColor: 'purple' } })).status === 400);
+  check('rejects the retired accentColor field', (await call('PATCH', '/users/seed-dana', { token: racerToken, body: { accentColor: '#B6FF3C' } })).status === 400);
   check('rejects an unknown racer pick', (await call('PATCH', '/users/seed-dana', { token: racerToken, body: { favoriteRacer: 'Batmobile' } })).status === 400);
   check('rejects a non-https avatar', (await call('PATCH', '/users/seed-dana', { token: racerToken, body: { avatarUrl: 'javascript:alert(1)' } })).status === 400);
   check('rejects unknown fields', (await call('PATCH', '/users/seed-dana', { token: racerToken, body: { role: 'admin' } })).status === 400);
@@ -801,7 +802,7 @@ async function main(): Promise<void> {
       'game:recorded carries the winner the flyby needs',
       recorded?.winner?.id === 'seed-noam' &&
         Boolean(recorded.winner.displayName) &&
-        Boolean(recorded.winner.accentColor),
+        Boolean(recorded.winner.raceColor),
       recorded?.winner,
     );
     check('game:recorded reports the winner’s all-time wins', typeof recorded?.winner?.allTime === 'number');

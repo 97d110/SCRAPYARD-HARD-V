@@ -24,7 +24,7 @@ import type { RaceColor } from '@scrapyard/shared';
 
 /** Cycled over the seeded crew so every racer starts with a colour picked. */
 const RACE_COLORS: RaceColor[] = ['blue', 'red', 'green', 'yellow'];
-import { ACCENT_COLORS, RACERS } from '../users/users.service';
+import { RACERS } from '../users/users.service';
 import { DEFAULT_PUNS } from '../content/content.service';
 import { killDerivedStats, tagRevengeSameDay, type KillPair } from '../common/kills';
 import { blindIndex, encryptField } from '../common/crypto';
@@ -138,7 +138,6 @@ function buildUser(spec: SeedSpec, position: number): UserDoc {
     avatarUrl: '',
     tagline: spec.tagline,
     favoriteRacer: RACERS[position % RACERS.length],
-    accentColor: ACCENT_COLORS[position % ACCENT_COLORS.length],
     raceColor: RACE_COLORS[position % RACE_COLORS.length],
     hebrewAliases: spec.hebrewAliases,
     createdAt: new Date(Date.now() - (90 - position) * 86_400_000).toISOString(),

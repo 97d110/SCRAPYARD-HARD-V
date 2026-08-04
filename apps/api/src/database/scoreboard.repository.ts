@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import { DEFAULT_RACE_COLOR } from '../users/users.service';
 import { MongoService } from './mongo.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { DEFAULT_METRIC } from '../metrics/metrics.constants';
-import type { LeaderboardEntry, PeriodKind, Scoreboard } from '@scrapyard/shared';
+import type { LeaderboardEntry, PeriodKind, RaceColor, Scoreboard } from '@scrapyard/shared';
 import { dayKey, monthKey, periodLabel } from '../common/period.util';
 
 /** Trim float noise from averages and formula results. */
@@ -61,7 +62,7 @@ export class ScoreboardRepository {
       user: {
         displayName: string;
         avatarUrl: string;
-        accentColor: string;
+        raceColor: RaceColor;
         favoriteRacer: string;
       };
     };
@@ -112,7 +113,7 @@ export class ScoreboardRepository {
         userId: row._id,
         displayName: row.user.displayName,
         avatarUrl: row.user.avatarUrl,
-        accentColor: row.user.accentColor,
+        raceColor: row.user.raceColor ?? DEFAULT_RACE_COLOR,
         favoriteRacer: row.user.favoriteRacer,
         primary: metrics[DEFAULT_METRIC] ?? 0,
         metrics,
@@ -127,7 +128,7 @@ export class ScoreboardRepository {
     const unscored = await users
       .find(
         { _id: { $nin: [...scored] } },
-        { projection: { displayName: 1, avatarUrl: 1, accentColor: 1, favoriteRacer: 1 } },
+        { projection: { displayName: 1, avatarUrl: 1, raceColor: 1, favoriteRacer: 1 } },
       )
       .sort({ displayName: 1 })
       .toArray();
@@ -140,7 +141,7 @@ export class ScoreboardRepository {
         userId: user._id,
         displayName: user.displayName,
         avatarUrl: user.avatarUrl,
-        accentColor: user.accentColor,
+        raceColor: user.raceColor ?? DEFAULT_RACE_COLOR,
         favoriteRacer: user.favoriteRacer,
         primary: 0,
         metrics: { ...zeroMetrics },

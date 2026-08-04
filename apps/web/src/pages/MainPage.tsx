@@ -6,6 +6,7 @@ import { AddScoreOverlay } from '../components/AddScoreOverlay';
 import { RacerBadge } from '../components/RacerBadge';
 import { NeonButton, Panel, Segmented, Stat } from '../components/ui/primitives';
 import type { PeriodKind } from '@scrapyard/shared';
+import { RACE_COLOR_HEX } from '../lib/raceColors';
 
 /**
  * Main page: the three leaderboards plus the Add Score entry point.
@@ -86,17 +87,17 @@ export function MainPage() {
         <div
           className="flex items-center gap-3 border-l-2 bg-white/[0.02] px-4 py-3"
           style={{
-            borderColor: dailyLeader.accentColor,
-            boxShadow: `inset 0 0 40px -30px ${dailyLeader.accentColor}`,
+            borderColor: RACE_COLOR_HEX[dailyLeader.raceColor],
+            boxShadow: `inset 0 0 40px -30px ${RACE_COLOR_HEX[dailyLeader.raceColor]}`,
           }}
         >
-          <Radio size={15} className="shrink-0 animate-pulse" style={{ color: dailyLeader.accentColor }} />
+          <Radio size={15} className="shrink-0 animate-pulse" style={{ color: RACE_COLOR_HEX[dailyLeader.raceColor] }} />
           <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-[var(--text-dim)]">
             <RacerBadge
               id={dailyLeader.userId}
               name={dailyLeader.displayName}
               avatarUrl={dailyLeader.avatarUrl}
-              accentColor={dailyLeader.accentColor}
+              accent={RACE_COLOR_HEX[dailyLeader.raceColor]}
               size={20}
               className="font-display font-bold uppercase tracking-wider text-white"
             />

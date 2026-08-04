@@ -63,13 +63,16 @@ export interface UserDoc {
   avatarUrl: string;
   tagline: string;
   favoriteRacer: string;
-  accentColor: string;
   /**
-   * Plaintext, like `displayName` and `googleFullName` beside it — these are
-   * already shown to every signed-in teammate, so the encryption rule above
-   * (email and Google id only) deliberately doesn't extend to them.
+   * The car this racer drives, and their colour throughout the UI. Replaced a
+   * separate free-hex `accentColor`: two unrelated colours on one profile read
+   * as the same setting twice, and only one of them meant anything in-game.
+   *
+   * Plaintext, like `displayName` and `googleFullName` beside it — already shown
+   * to every signed-in teammate, so the encryption rule above (email and Google
+   * id only) deliberately doesn't extend to it.
    */
-  raceColor: RaceColor | null;
+  raceColor: RaceColor;
   hebrewAliases: string[];
   createdAt: string;
   updatedAt: string;

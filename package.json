@@ -33,6 +33,7 @@
     "typecheck:web": "tsc -p apps/web/tsconfig.app.json --noEmit",
     "seed": "ts-node -P apps/api/tsconfig.json apps/api/src/database/seed.ts",
     "migrate:encrypt-users": "ts-node -P apps/api/tsconfig.json apps/api/src/database/migrate-encrypt-users.ts",
+    "migrate:race-color": "ts-node -P apps/api/tsconfig.json apps/api/src/database/migrate-race-color.ts",
     "smoke": "ts-node -P apps/api/tsconfig.json apps/api/src/database/smoke.ts",
     "preflight": "ts-node -P apps/api/tsconfig.json apps/api/src/diagnostics/preflight.ts",
     "probe:groq": "ts-node -P apps/api/tsconfig.json apps/api/src/diagnostics/groq-hebrew-probe.ts"

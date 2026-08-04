@@ -25,7 +25,7 @@ import {
 import { AdminGuard, CurrentUser, JwtAuthGuard } from '../auth/guards';
 import { ClientId } from '../live/client-id.decorator';
 import { LiveGateway } from '../live/live.gateway';
-import { ACCENT_COLORS, RACE_COLORS, RACERS, UsersService } from './users.service';
+import { RACE_COLORS, RACERS, UsersService } from './users.service';
 import { AchievementsService } from '../achievements/achievements.service';
 import type { ProfileBundle, PublicUser, RaceColor } from '@scrapyard/shared';
 
@@ -43,16 +43,9 @@ export class UpdateProfileDto {
   @IsOptional() @IsIn(RACERS as unknown as string[])
   favoriteRacer?: string;
 
-  @IsOptional() @IsHexColor()
-  accentColor?: string;
-
-  /**
-   * `ValidateIf` rather than `IsOptional`, because null is a meaningful value
-   * here — it clears the pick — and `IsOptional` would skip validating it.
-   */
-  @ValidateIf((_, value) => value !== null && value !== undefined)
-  @IsIn(RACE_COLORS as unknown as string[])
-  raceColor?: RaceColor | null;
+  /** One of the four in-game car colours — also the racer's colour app-wide. */
+  @IsOptional() @IsIn(RACE_COLORS as unknown as string[])
+  raceColor?: RaceColor;
 
   /** Trimmed, de-duplicated and length-checked in the service. */
   @IsOptional() @IsArray() @ArrayMaxSize(12) @IsString({ each: true }) @MaxLength(40, { each: true })
@@ -143,8 +136,8 @@ export class UsersController {
 
   /** Options the profile editor renders. */
   @Get('options')
-  options(): { racers: string[]; accents: string[] } {
-    return { racers: [...RACERS], accents: [...ACCENT_COLORS] };
+  options(): { racers: string[] } {
+    return { racers: [...RACERS] };
   }
 
   /** Anyone signed in can view anyone's achievements page. */

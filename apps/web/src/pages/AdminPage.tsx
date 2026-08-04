@@ -929,7 +929,7 @@ function CrewRow({
 
   const [editing, setEditing] = useState(false);
   const [aliases, setAliases] = useState(user.hebrewAliases.join(', '));
-  const [raceColor, setRaceColor] = useState<RaceColor | null>(user.raceColor);
+  const [raceColor, setRaceColor] = useState<RaceColor>(user.raceColor);
   const [saving, setSaving] = useState(false);
   const [rowError, setRowError] = useState<string | null>(null);
 
@@ -964,14 +964,14 @@ function CrewRow({
 
   return (
     <Panel
-      accent={user.accentColor}
+      accent={RACE_COLOR_HEX[user.raceColor]}
       className={`p-3.5 ${user.claimed ? '' : 'opacity-90'}`}
     >
       <div className="flex flex-wrap items-center gap-3">
         <Avatar
           src={user.avatarUrl || undefined}
           name={user.displayName}
-          accent={user.accentColor}
+          accent={RACE_COLOR_HEX[user.raceColor]}
           size={36}
         />
 
@@ -1018,7 +1018,7 @@ function CrewRow({
           </span>
         </span>
 
-        {user.raceColor && (
+        {(
           <span
             className="h-4 w-4 shrink-0 rounded-full"
             style={{
@@ -1090,7 +1090,7 @@ function CrewRow({
           </div>
 
           <div>
-            <Label className="mb-1.5">Car colour</Label>
+            <Label className="mb-1.5">Colour</Label>
             <div className="flex flex-wrap items-center gap-2">
               {RACE_COLORS.map((color) => {
                 const active = raceColor === color;
@@ -1098,10 +1098,10 @@ function CrewRow({
                   <button
                     key={color}
                     type="button"
-                    onClick={() => setRaceColor(active ? null : color)}
+                    onClick={() => setRaceColor(color)}
                     aria-label={color}
                     aria-pressed={active}
-                    title={active ? `${color} — tap to clear` : color}
+                    title={color}
                     className="h-7 w-7 rounded-full transition-transform hover:scale-110"
                     style={{
                       background: RACE_COLOR_HEX[color],
@@ -1114,7 +1114,7 @@ function CrewRow({
                 );
               })}
               <span className="font-mono text-[0.6rem] text-[var(--text-faint)]">
-                {raceColor ? 'tap again to clear' : 'optional'}
+                their car, and their colour across the app
               </span>
             </div>
           </div>
@@ -1813,7 +1813,10 @@ function GamesEditor({ onBack }: { onBack: () => void }) {
   };
 
   const finisherLabel = (racerId: string) => usersById.get(racerId)?.displayName ?? 'Unknown racer';
-  const finisherAccent = (racerId: string) => usersById.get(racerId)?.accentColor ?? '#7C5CFF';
+  const finisherAccent = (racerId: string) => {
+    const racer = usersById.get(racerId);
+    return racer ? RACE_COLOR_HEX[racer.raceColor] : '#7C5CFF';
+  };
 
   const confirmDelete = (game: GameEntry) => {
     const when = new Date(game.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });

@@ -15,7 +15,7 @@ export function RacerBadge({
   id,
   name,
   avatarUrl,
-  accentColor,
+  accent,
   size = 18,
   className = '',
   title,
@@ -23,7 +23,7 @@ export function RacerBadge({
   id: string;
   name: string;
   avatarUrl?: string;
-  accentColor?: string;
+  accent?: string;
   size?: number;
   className?: string;
   title?: string;
@@ -35,7 +35,7 @@ export function RacerBadge({
       onClick={(event) => event.stopPropagation()}
       className={`inline-flex items-center gap-1.5 align-middle transition hover:text-plasma ${className}`}
     >
-      <Avatar src={avatarUrl || undefined} name={name} size={size} accent={accentColor} />
+      <Avatar src={avatarUrl || undefined} name={name} size={size} accent={accent} />
       <span className="truncate">{name}</span>
     </Link>
   );

@@ -73,7 +73,7 @@ export function UserPage() {
   /*
    * Everything a profile is derived from, and all of it computed on read: races
    * move the stats, streaks, rivals and heat strip; the roster carries rivals'
-   * names and accents; metrics are the columns behind `totals`; and a retuned
+   * names and colours; metrics are the columns behind `totals`; and a retuned
    * achievement rule can lock or unlock a badge with no write to this racer at
    * all.
    */
@@ -86,7 +86,7 @@ export function UserPage() {
   if (!bundle) return <LoadingRig label="Pulling telemetry" />;
 
   const { user, streaks, ranks, achievements, totals, columns, recentGames, rivals, activity } = bundle;
-  const accent = user.accentColor;
+  const accent = RACE_COLOR_HEX[user.raceColor];
   // Resolve a racer id to the fields RacerBadge needs (avatar + name + accent).
   const racerRef = (racerId: string) => {
     const other = userById(racerId);
@@ -94,7 +94,7 @@ export function UserPage() {
       id: racerId,
       name: other?.displayName ?? 'a rival',
       avatarUrl: other?.avatarUrl ?? '',
-      accentColor: other?.accentColor ?? '#7C5CFF',
+      accent: other ? RACE_COLOR_HEX[other.raceColor] : '#7C5CFF',
     };
   };
 
@@ -407,11 +407,11 @@ function NemesisPanel({ rivals, accent }: { rivals: Rival[]; accent: string }) {
               className="block transition hover:-translate-y-0.5"
             >
               <Panel
-                accent={isNemesis ? '#FF3B30' : rival.accentColor}
+                accent={isNemesis ? '#FF3B30' : RACE_COLOR_HEX[rival.raceColor]}
                 lit={isNemesis}
                 className="flex items-center gap-3 p-3.5"
               >
-              <Avatar src={rival.avatarUrl} name={rival.displayName} size={38} accent={rival.accentColor} />
+              <Avatar src={rival.avatarUrl} name={rival.displayName} size={38} accent={RACE_COLOR_HEX[rival.raceColor]} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="truncate font-display text-[0.8rem] font-bold uppercase tracking-wide text-white">
@@ -463,7 +463,7 @@ function KillChips({
 }: {
   game: GameParticipation;
   userId: string;
-  resolve: (id: string) => { id: string; name: string; avatarUrl: string; accentColor: string };
+  resolve: (id: string) => { id: string; name: string; avatarUrl: string; accent: string };
 }) {
   const kills = game.events.filter((event) => event.killerId === userId);
   const deaths = game.events.filter((event) => event.victimId === userId);
@@ -723,8 +723,7 @@ function ProfileEditor({
   const [tagline, setTagline] = useState(user.tagline);
   const [avatarUrl, setAvatarUrl] = useState(user.avatarUrl);
   const [favoriteRacer, setFavoriteRacer] = useState(user.favoriteRacer);
-  const [accentColor, setAccentColor] = useState(user.accentColor);
-  const [raceColor, setRaceColor] = useState<RaceColor | null>(user.raceColor);
+  const [raceColor, setRaceColor] = useState<RaceColor>(user.raceColor);
   /*
    * Held as one comma-separated string rather than an array of inputs. Typing
    * "עמית, נינו" in a single box is how people naturally write a list of names,
@@ -732,7 +731,10 @@ function ProfileEditor({
    * a tag-chip editor would be more machinery for the same result.
    */
   const [hebrewAliases, setHebrewAliases] = useState(user.hebrewAliases.join(', '));
-  const [options, setOptions] = useState<{ racers: string[]; accents: string[] } | null>(null);
+  /* Live preview: the panel, avatar ring and Save button all take the colour
+   * being previewed, not the saved one, so the choice is visible before saving. */
+  const previewAccent = RACE_COLOR_HEX[raceColor];
+  const [options, setOptions] = useState<{ racers: string[] } | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -765,7 +767,6 @@ function ProfileEditor({
         tagline,
         avatarUrl,
         favoriteRacer,
-        accentColor,
         raceColor,
         hebrewAliases: hebrewAliases
           .split(',')
@@ -782,7 +783,7 @@ function ProfileEditor({
 
   return (
     <Panel
-      accent={accentColor}
+      accent={previewAccent}
       lit
       className="p-6 sm:p-7"
       style={{ animation: 'rise 300ms cubic-bezier(0.16,1,0.3,1) both' }}
@@ -795,7 +796,7 @@ function ProfileEditor({
       <div className="mt-6 grid gap-6 lg:grid-cols-[auto_1fr]">
         {/* Avatar column. */}
         <div className="flex flex-col items-center gap-3">
-          <Avatar src={avatarUrl} name={displayName} size={112} accent={accentColor} />
+          <Avatar src={avatarUrl} name={displayName} size={112} accent={previewAccent} />
           <input
             ref={fileRef}
             type="file"
@@ -809,7 +810,7 @@ function ProfileEditor({
           <div className="flex gap-2">
             <NeonButton
               variant="ghost"
-              accent={accentColor}
+              accent={previewAccent}
               className="!px-3 !py-2 !text-[0.6rem]"
               onClick={() => fileRef.current?.click()}
             >
@@ -878,8 +879,8 @@ function ProfileEditor({
                   style={
                     racer === favoriteRacer
                       ? {
-                          background: `${accentColor}26`,
-                          boxShadow: `inset 0 0 0 1px ${accentColor}`,
+                          background: `${previewAccent}26`,
+                          boxShadow: `inset 0 0 0 1px ${previewAccent}`,
                         }
                       : undefined
                   }
@@ -891,7 +892,7 @@ function ProfileEditor({
           </div>
 
           <div>
-            <Label className="mb-1.5">Your car colour</Label>
+            <Label className="mb-1.5">Your colour</Label>
             <div className="flex flex-wrap items-center gap-2">
               {RACE_COLORS.map((color) => {
                 const active = raceColor === color;
@@ -899,12 +900,10 @@ function ProfileEditor({
                   <button
                     key={color}
                     type="button"
-                    // Tapping the active one clears it — "no usual colour" is a
-                    // real answer, and it's the default for everyone at first.
-                    onClick={() => setRaceColor(active ? null : color)}
+                    onClick={() => setRaceColor(color)}
                     aria-label={color}
                     aria-pressed={active}
-                    title={active ? `${color} — tap to clear` : color}
+                    title={color}
                     className="h-9 w-9 rounded-full transition-transform hover:scale-110"
                     style={{
                       background: RACE_COLOR_HEX[color],
@@ -917,7 +916,7 @@ function ProfileEditor({
                 );
               })}
               <span className="font-mono text-[0.6rem] text-[var(--text-faint)]">
-                {raceColor ? 'tap again to clear' : 'optional'}
+                your car, and your colour across the app
               </span>
             </div>
           </div>
@@ -938,27 +937,6 @@ function ProfileEditor({
             </p>
           </div>
 
-          <div>
-            <Label className="mb-1.5">Neon accent</Label>
-            <div className="flex flex-wrap gap-2">
-              {(options?.accents ?? [accentColor]).map((color) => (
-                <button
-                  key={color}
-                  onClick={() => setAccentColor(color)}
-                  aria-label={color}
-                  className="h-9 w-9 rounded-full transition-transform hover:scale-110"
-                  style={{
-                    background: color,
-                    boxShadow:
-                      color.toUpperCase() === accentColor.toUpperCase()
-                        ? `0 0 0 2px #fff, 0 0 22px ${color}`
-                        : `0 0 12px ${color}88`,
-                  }}
-                />
-              ))}
-            </div>
-          </div>
-
           {error && (
             <p className="border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
               {error}
@@ -968,7 +946,7 @@ function ProfileEditor({
           <div className="flex gap-3 pt-1">
             <NeonButton
               variant="primary"
-              accent={accentColor}
+              accent={previewAccent}
               ring
               className="cta-nudge"
               disabled={saving || displayName.trim().length < 2}

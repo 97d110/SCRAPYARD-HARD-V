@@ -19,6 +19,7 @@ import { Avatar, Label, NeonButton, Panel, withGlow } from './ui/primitives';
 import { api } from '../lib/api';
 import { recordAudio, speechSupported, type RecordingSession } from '../lib/speech';
 import type { GameResultInput, KillEventInput, MetricDef, PublicUser } from '@scrapyard/shared';
+import { RACE_COLOR_HEX } from '../lib/raceColors';
 
 /**
  * The race-entry overlay.
@@ -459,7 +460,7 @@ export function AddScoreOverlay({
   };
 
   const winner = finishers[0] ? usersById.get(finishers[0].racerId) ?? null : null;
-  const accent = winner?.accentColor ?? '#FF6A00';
+  const accent = winner ? RACE_COLOR_HEX[winner.raceColor] : '#FF6A00';
 
   // Client-side gate, mirroring the server DTO. A winner alone is enough;
   // scores are optional (a blank reads as 0). Only a *typed* score has to be a
@@ -649,9 +650,9 @@ export function AddScoreOverlay({
                   style={
                     selected
                       ? {
-                          ...withGlow(user.accentColor),
-                          background: `linear-gradient(135deg, ${user.accentColor}2e, ${user.accentColor}0d)`,
-                          boxShadow: `inset 0 0 0 1px ${user.accentColor}, 0 0 30px -12px ${user.accentColor}`,
+                          ...withGlow(RACE_COLOR_HEX[user.raceColor]),
+                          background: `linear-gradient(135deg, ${RACE_COLOR_HEX[user.raceColor]}2e, ${RACE_COLOR_HEX[user.raceColor]}0d)`,
+                          boxShadow: `inset 0 0 0 1px ${RACE_COLOR_HEX[user.raceColor]}, 0 0 30px -12px ${RACE_COLOR_HEX[user.raceColor]}`,
                         }
                       : undefined
                   }
@@ -660,7 +661,7 @@ export function AddScoreOverlay({
                     src={user.avatarUrl}
                     name={user.displayName}
                     size={38}
-                    accent={user.accentColor}
+                    accent={RACE_COLOR_HEX[user.raceColor]}
                   />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-display text-[0.75rem] font-bold uppercase tracking-wide text-white">
@@ -674,8 +675,8 @@ export function AddScoreOverlay({
                     <span
                       className="grid h-6 w-6 shrink-0 place-items-center rounded-full"
                       style={{
-                        background: user.accentColor,
-                        boxShadow: `0 0 16px ${user.accentColor}`,
+                        background: RACE_COLOR_HEX[user.raceColor],
+                        boxShadow: `0 0 16px ${RACE_COLOR_HEX[user.raceColor]}`,
                       }}
                     >
                       <Check size={13} className="text-black" strokeWidth={3.5} />
@@ -722,7 +723,7 @@ export function AddScoreOverlay({
                       ? 'score-order-flicker border-danger/70'
                       : 'border-hairline'
                 }`}
-                style={withGlow(user.accentColor)}
+                style={withGlow(RACE_COLOR_HEX[user.raceColor])}
               >
                 <div className="flex items-center gap-2 sm:gap-3">
                   {/* Drag handle — works on touch and mouse via Pointer Events. */}
@@ -776,7 +777,7 @@ export function AddScoreOverlay({
                       src={user.avatarUrl}
                       name={user.displayName}
                       size={34}
-                      accent={user.accentColor}
+                      accent={RACE_COLOR_HEX[user.raceColor]}
                     />
                     {index === 0 && (
                       <span
@@ -1363,7 +1364,7 @@ function RacerSelect({
       >
         {selected ? (
           <>
-            <Avatar src={selected.avatarUrl} name={selected.displayName} size={22} accent={selected.accentColor} />
+            <Avatar src={selected.avatarUrl} name={selected.displayName} size={22} accent={RACE_COLOR_HEX[selected.raceColor]} />
             <span className="min-w-0 flex-1 truncate font-display text-[0.72rem] font-bold uppercase tracking-wide text-white">
               {selected.displayName}
             </span>
@@ -1401,12 +1402,12 @@ function RacerSelect({
                     active ? 'bg-white/[0.05]' : ''
                   }`}
                 >
-                  <Avatar src={racer.avatarUrl} name={racer.displayName} size={22} accent={racer.accentColor} />
+                  <Avatar src={racer.avatarUrl} name={racer.displayName} size={22} accent={RACE_COLOR_HEX[racer.raceColor]} />
                   <span className="min-w-0 flex-1 truncate font-display text-[0.72rem] font-bold uppercase tracking-wide text-white">
                     {racer.displayName}
                   </span>
                   {active && (
-                    <Check size={13} className="shrink-0" style={{ color: racer.accentColor }} strokeWidth={3} />
+                    <Check size={13} className="shrink-0" style={{ color: RACE_COLOR_HEX[racer.raceColor] }} strokeWidth={3} />
                   )}
                 </button>
               );

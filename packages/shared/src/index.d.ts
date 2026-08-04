@@ -14,9 +14,8 @@
  *     emits a flat `dist/main.js` while importing from outside its own tree.
  *
  * The trade-off: no runtime values here — no `const`, no `enum`, no functions.
- * Shared constants (the racer roster, the accent palette, the built-in metric
- * and achievement definitions) live under `apps/api/src` and reach the client
- * through the API.
+ * Shared constants (the racer roster, the built-in metric and achievement
+ * definitions) live under `apps/api/src` and reach the client through the API.
  *
  * ── The data model, in one paragraph ────────────────────────────────────────
  *
@@ -243,7 +242,7 @@ export interface Rival {
   userId: string;
   displayName: string;
   avatarUrl: string;
-  accentColor: string;
+  raceColor: RaceColor;
   youKilledThem: number;
   theyKilledYou: number;
   yourRevenges: number;
@@ -292,9 +291,7 @@ export interface UserRecord {
   avatarUrl: string;
   tagline: string;
   favoriteRacer: string;
-  accentColor: string;
-  /** The car color this racer usually drives, or null if they haven't picked. */
-  raceColor: RaceColor | null;
+    raceColor: RaceColor;
   /**
    * This racer's name in Hebrew — first name, surname, nicknames, however
    * people actually refer to them out loud. Fed to the voice-entry extractor
@@ -318,8 +315,7 @@ export interface PublicUser {
   googleAvatarUrl: string;
   tagline: string;
   favoriteRacer: string;
-  accentColor: string;
-  raceColor: RaceColor | null;
+  raceColor: RaceColor;
   hebrewAliases: string[];
   createdAt: string;
   claimed: boolean;
@@ -334,7 +330,7 @@ export interface LeaderboardEntry {
   userId: string;
   displayName: string;
   avatarUrl: string;
-  accentColor: string;
+  raceColor: RaceColor;
   favoriteRacer: string;
   /** Convenience mirror of `metrics[defaultMetric]` — the value rows rank by. */
   primary: number;
@@ -538,7 +534,7 @@ export interface GameRecordedEvent extends LiveEventBase {
     id: string;
     displayName: string;
     avatarUrl: string;
-    accentColor: string;
+    raceColor: RaceColor;
     /** Their all-time win count after this race. */
     allTime: number;
   };
@@ -608,7 +604,7 @@ export interface RecordGameResponse {
     id: string;
     displayName: string;
     avatarUrl: string;
-    accentColor: string;
+    raceColor: RaceColor;
     allTime: number;
   };
   boards: { allTime: Scoreboard; monthly: Scoreboard; daily: Scoreboard };

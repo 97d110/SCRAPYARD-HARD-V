@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { UsersService } from '../users/users.service';
+import { DEFAULT_RACE_COLOR, UsersService } from '../users/users.service';
 import { MongoService } from '../database/mongo.service';
 import { ScoreboardRepository } from '../database/scoreboard.repository';
 import { MetricsService, MetricRegistry } from '../metrics/metrics.service';
@@ -7,6 +7,7 @@ import { AchievementRulesService } from './achievement-rules.service';
 import { aggregate, basePerGame } from '../metrics/metrics.constants';
 import type {
   AchievementDef,
+  RaceColor,
   AchievementRule,
   AchievementScope,
   AchievementState,
@@ -177,16 +178,16 @@ export class AchievementsService {
 
   /** Minimal display fields for every racer, for the rivals panel. */
   private async rosterLite(): Promise<
-    Map<string, { displayName: string; avatarUrl: string; accentColor: string }>
+    Map<string, { displayName: string; avatarUrl: string; raceColor: RaceColor }>
   > {
     const users = await this.mongo.users();
     const docs = await users
-      .find({}, { projection: { displayName: 1, avatarUrl: 1, accentColor: 1 } })
+      .find({}, { projection: { displayName: 1, avatarUrl: 1, raceColor: 1 } })
       .toArray();
     return new Map(
       docs.map((d) => [
         d._id,
-        { displayName: d.displayName, avatarUrl: d.avatarUrl, accentColor: d.accentColor },
+        { displayName: d.displayName, avatarUrl: d.avatarUrl, raceColor: d.raceColor ?? DEFAULT_RACE_COLOR },
       ]),
     );
   }
@@ -199,7 +200,7 @@ export class AchievementsService {
   private computeRivals(
     userId: string,
     rows: ParticipationRow[],
-    roster: Map<string, { displayName: string; avatarUrl: string; accentColor: string }>,
+    roster: Map<string, { displayName: string; avatarUrl: string; raceColor: RaceColor }>,
   ): Rival[] {
     const tally = new Map<string, { youKilledThem: number; theyKilledYou: number; yourRevenges: number }>();
     const bump = (id: string): { youKilledThem: number; theyKilledYou: number; yourRevenges: number } => {
@@ -227,7 +228,7 @@ export class AchievementsService {
           userId: opponentId,
           displayName: who?.displayName ?? 'Unknown racer',
           avatarUrl: who?.avatarUrl ?? '',
-          accentColor: who?.accentColor ?? '#7C5CFF',
+          raceColor: who?.raceColor ?? DEFAULT_RACE_COLOR,
           ...counts,
         };
       })
