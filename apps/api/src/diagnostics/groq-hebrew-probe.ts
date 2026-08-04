@@ -157,7 +157,20 @@ interface Finisher {
   gameScore: number | null;
 }
 
-async function extract(
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Raised so `main` can tell a quota wall apart from a genuine failure. */
+class RateLimited extends Error {}
+
+/**
+ * One attempt. `main` retries on RateLimited.
+ *
+ * The prompt has grown a lot — roster, first-person rules, contracted teens —
+ * so a single call is now well over a thousand tokens and ten of them back to
+ * back exceed the free tier's 8,000 tokens per minute. That's a property of the
+ * probe running in a tight loop, not of the app: one race is one call.
+ */
+async function attempt(
   transcript: string,
   apiKey: string,
   model: string,
@@ -195,6 +208,11 @@ async function extract(
 
     if (!response.ok) {
       const body = await response.text();
+      if (response.status === 429) {
+        // Groq states the wait in `retry-after`; trust it over guessing.
+        const after = Number(response.headers.get('retry-after'));
+        throw new RateLimited(String(Number.isFinite(after) && after > 0 ? after : 12));
+      }
       // 400 here most often means the model doesn't support strict mode —
       // worth saying so plainly rather than dumping a raw error.
       const extra =
@@ -212,6 +230,25 @@ async function extract(
     return (JSON.parse(content) as { finishers: Finisher[] }).finishers;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/** Waits out a rate limit rather than letting it masquerade as a failed case. */
+async function extract(
+  transcript: string,
+  apiKey: string,
+  model: string,
+  speakerId?: string,
+): Promise<Finisher[]> {
+  for (let tries = 0; ; tries += 1) {
+    try {
+      return await attempt(transcript, apiKey, model, speakerId);
+    } catch (error) {
+      if (!(error instanceof RateLimited) || tries >= 2) throw error;
+      const seconds = Number(error.message) + 1;
+      console.log(`      rate limited — waiting ${seconds}s`);
+      await sleep(seconds * 1000);
+    }
   }
 }
 
@@ -327,15 +364,22 @@ async function main(): Promise<void> {
   const failed = tested - passed - orderOnly;
   console.log(`\n${passed} passed, ${orderOnly} partial, ${failed} failed, ${errored} errored.`);
 
-  if (errored === CASES.length) {
-    console.log('Every request failed to complete, so nothing about Hebrew was');
-    console.log('measured. Fix the errors above and re-run before drawing conclusions.');
-    process.exit(1);
-  }
-
+  /*
+   * A run with ANY unfinished case gets no verdict at all — not a verdict with a
+   * caveat attached. The first version printed "safe to build the UI on this"
+   * underneath a note that three cases never ran, which is exactly the kind of
+   * unearned reassurance this probe exists to avoid.
+   */
   if (errored > 0) {
-    console.log(`Note: ${errored} of ${CASES.length} never completed, so this verdict`);
-    console.log('covers only the cases that did.');
+    console.log(`INCOMPLETE — ${errored} of ${CASES.length} never ran, so nothing is proven about those.`);
+    if (tested === 0) {
+      console.log('Nothing was measured at all. Fix the errors above and re-run.');
+    } else if (passed === tested) {
+      console.log(`The ${tested} that did run all passed. Re-run to cover the rest.`);
+    } else {
+      console.log(`Of the ${tested} that ran: ${passed} passed, ${orderOnly} partial, ${failed} failed.`);
+    }
+    process.exit(1);
   }
 
   if (passed === tested) {
