@@ -103,7 +103,7 @@ export function Avatar({
   className = '',
   artwork = false,
   vehicle,
-  vehicleScale = 0.2,
+  vehicleScale = 0.6,
 }: {
   src?: string;
   name: string;
@@ -128,10 +128,10 @@ export function Avatar({
    * Vehicle size as a fraction of the avatar.
    *
    * Per call site rather than one global number, because a badge legible at
-   * 112px is a smudge at 34px. 0.2 on the profile hero and editor preview, 0.3
-   * on podium places, and no vehicle at all on list avatars — a decision the
-   * caller makes explicitly, so the car can't silently appear when someone
-   * adjusts an avatar's size.
+   * 112px is a smudge at 34px. 0.6 by default — the profile hero and editor
+   * preview — 0.3 on podium places, and no vehicle at all on list avatars: a
+   * decision the caller makes explicitly, so the car can't silently appear when
+   * someone adjusts an avatar's size.
    */
   vehicleScale?: number;
 }) {
@@ -201,12 +201,18 @@ export function Avatar({
           loading="lazy"
           className="pointer-events-none absolute bottom-0 left-0 z-20 object-contain"
           style={{
-            width: Math.round(size * vehicleScale * 1.6),
+            /*
+             * A SQUARE box, with object-contain fitting each car inside it.
+             * The art's aspect ratio varies from 1.0 (Beast) to 1.6 (Turboboy),
+             * so a fixed wide box would size the squarer cars by height and
+             * leave them floating off-centre in dead space.
+             */
+            width: Math.round(size * vehicleScale),
             height: Math.round(size * vehicleScale),
-            // Nudged outside the rim so the car reads as a badge on the circle
+            // Hangs slightly off the rim so it reads as a badge ON the circle
             // rather than something trapped inside it.
-            transform: 'translate(-12%, 12%)',
-            filter: `drop-shadow(0 0 6px rgb(0 0 0 / 0.8))`,
+            transform: 'translate(-14%, 14%)',
+            filter: 'drop-shadow(0 1px 5px rgb(0 0 0 / 0.85))',
           }}
         />
       )}

@@ -11,7 +11,7 @@
  *
  * The sources are ~900px and average 760 KB each, because they were cut out of
  * video and screenshots at whatever size was available. Nothing renders them
- * above 112px (an avatar) or a few hundred (the profile vehicle showcase), so
+ * above 112px (an avatar) or ~67px (the vehicle badge), so
  * shipping them as-is would mean roughly 27 MB of avatars — on a free-tier host,
  * for images displayed 30-50× smaller than they're stored.
  *
@@ -48,17 +48,14 @@ const OUT = join(ROOT, 'apps', 'web', 'src', 'assets', 'racers');
  * Portraits fill an avatar, which tops out at 112px in the profile editor
  * preview — 224 on a 2× display, so 256 is the ceiling worth keeping.
  *
- * Vehicles are smaller than portraits, not larger: the car rides as a badge on
- * the bottom-left of the avatar circle at a fraction of its size. The largest
- * avatar is 112px, so even at a generous 40% the badge draws at 45px — 90 at 2×.
- *
- * Sized to cover any ratio up to 40% deliberately, so the badge's proportion
- * stays a single CSS constant that can be tuned by eye without regenerating a
- * single file. Assets and layout decisions shouldn't be coupled.
+ * The vehicle badge draws at 60% of the avatar, so 67px on the largest (112px)
+ * and 134 on a 2× display. One size at 192 covers that with headroom — and it's
+ * ONE size rather than two because only one is ever rendered: two variants meant
+ * shipping a file nothing referenced.
  */
 const VARIANTS = {
   portrait: [96, 256],
-  vehicle: [48, 96],
+  vehicle: [192],
 };
 const QUALITY = 82;
 
@@ -139,9 +136,15 @@ function main() {
 
     for (const size of VARIANTS[kind]) {
       const out = join(OUT, `${slug}-${kind}-${size}.webp`);
-      // Portraits are taller than they are wide and vehicles wider than tall,
-      // so each is constrained on its long edge — `x256` vs `384x`.
-      const geometry = kind === 'portrait' ? `x${size}` : `${size}x`;
+      /*
+       * Portraits are reliably taller than wide, so height is the constraint.
+       *
+       * Vehicles are NOT reliably either way — the cut-outs range from 1:1
+       * (Beast) to 1.6:1 (Turboboy) — so they get a square box to fit inside.
+       * Constraining width alone would let a car cut taller than wide come out
+       * oversized, and that's a filename away from happening.
+       */
+      const geometry = kind === 'portrait' ? `x${size}` : `${size}x${size}`;
       execFileSync('convert', [
         join(SRC, file),
         '-resize', geometry,

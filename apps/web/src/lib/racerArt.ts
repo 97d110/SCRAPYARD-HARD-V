@@ -16,9 +16,9 @@
  *
  * ── Why two sizes ─────────────────────────────────────────────────────────
  *
- * Portraits fill an avatar (up to 112px, so 256 covers 2×). Vehicles ride as a
- * small badge on the avatar's corner at 20–30% of its size, so they're the
- * smaller asset, not the larger one. See scripts/build-racer-art.mjs.
+ * Portraits fill an avatar (up to 112px, so 256 covers 2×). The vehicle rides as
+ * a badge on the corner at 60% of the avatar, so 192 covers it at 2× — one size,
+ * because only one is ever drawn. See scripts/build-racer-art.mjs.
  */
 
 /*
@@ -33,10 +33,12 @@ const FILES = import.meta.glob<string>('../assets/racers/*.webp', {
 });
 
 export interface RacerArt {
+  /** 96px — the picker's thumbnails. */
   portraitSmall: string;
+  /** 256px — fills an avatar. */
   portraitLarge: string;
-  vehicleSmall: string;
-  vehicleLarge: string;
+  /** 192px — the corner badge, at any scale it's drawn. */
+  vehicle: string;
 }
 
 /** slug → art, containing only slugs whose files are actually present. */
@@ -48,19 +50,13 @@ for (const [path, url] of Object.entries(FILES)) {
   if (!match) continue;
   const [, slug, kind, size] = match;
 
-  const entry = (ART[slug] ??= {
-    portraitSmall: '',
-    portraitLarge: '',
-    vehicleSmall: '',
-    vehicleLarge: '',
-  });
+  const entry = (ART[slug] ??= { portraitSmall: '', portraitLarge: '', vehicle: '' });
 
   if (kind === 'portrait') {
     if (size === '96') entry.portraitSmall = url;
     if (size === '256') entry.portraitLarge = url;
-  } else {
-    if (size === '48') entry.vehicleSmall = url;
-    if (size === '96') entry.vehicleLarge = url;
+  } else if (size === '192') {
+    entry.vehicle = url;
   }
 }
 
@@ -71,7 +67,7 @@ for (const [path, url] of Object.entries(FILES)) {
  * incomplete entry keeps `racerArt()` a straight "have it or don't".
  */
 for (const [slug, art] of Object.entries(ART)) {
-  const complete = art.portraitSmall && art.portraitLarge && art.vehicleSmall && art.vehicleLarge;
+  const complete = art.portraitSmall && art.portraitLarge && art.vehicle;
   if (!complete) delete ART[slug];
 }
 
@@ -118,9 +114,7 @@ export function avatarFor(subject: AvatarSubject): {
   if (subject.useRacerArt) {
     const art = racerArt(subject.racerSlug);
     if (art) {
-      // vehicleSmall, not Large: the badge never draws above ~22px, so the
-      // 48px asset already covers a 2x display and the 96 would be waste.
-      return { src: art.portraitLarge, isRacerArt: true, vehicle: art.vehicleSmall };
+      return { src: art.portraitLarge, isRacerArt: true, vehicle: art.vehicle };
     }
   }
   return { src: subject.avatarUrl || undefined, isRacerArt: false, vehicle: null };
