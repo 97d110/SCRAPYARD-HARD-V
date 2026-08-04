@@ -11,7 +11,6 @@ import {
   Plus,
   Search,
   Skull,
-  Square,
   Trophy,
   X,
 } from 'lucide-react';
@@ -588,25 +587,45 @@ export function AddScoreOverlay({
         */}
         {voiceReady === true && (
           <>
+            {/*
+              A raw <button> rather than NeonButton, because both live states
+              need their own class on the element and NeonButton owns that slot
+              for `ring`. `btn-primary` is written out literally here for the
+              same reason it is inside NeonButton: a template-built class name
+              never appears in Tailwind's scan and gets purged from the build.
+
+              Padding is trimmed off `.btn-primary`'s full CTA size — this wants
+              to be unmistakable, but "Add Score" is still the button that ends
+              the flow, and two identically-sized primaries would argue.
+            */}
             <button
               type="button"
-              className={`btn btn-ghost w-full !py-2 !text-[0.65rem] ${listening ? '!border-plasma/70 !text-plasma' : ''}`}
+              className={`btn btn-primary w-full !py-3 !text-[0.7rem] ${
+                listening ? 'rec-live' : voiceBusy ? 'rec-thinking' : ''
+              }`}
+              // Never disabled while listening — that click is the stop button.
               disabled={phase !== 'idle' || voiceBusy}
+              aria-live="polite"
               onClick={() => (listening ? sessionRef.current?.stop() : void runVoiceEntry())}
             >
               {voiceBusy ? (
                 <>
-                  <Loader2 size={13} className="animate-spin" />
-                  Reading it…
+                  <Loader2 size={14} className="animate-spin" />
+                  Working out who raced…
                 </>
               ) : listening ? (
                 <>
-                  <Square size={11} className="animate-pulse" />
-                  Recording — tap when done
+                  {/* A steady red dot: the recording convention, and the one cue
+                      that survives `prefers-reduced-motion` killing the ring. */}
+                  <span
+                    className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#FF3B30]"
+                    style={{ boxShadow: '0 0 10px #FF3B30' }}
+                  />
+                  Recording — tap to finish
                 </>
               ) : (
                 <>
-                  <Mic size={13} />
+                  <Mic size={14} />
                   Say the results in Hebrew
                 </>
               )}

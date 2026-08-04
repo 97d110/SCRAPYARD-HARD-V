@@ -172,6 +172,65 @@
     pointer-events: none;
   }
 
+  /*
+   * Voice entry's two live states.
+   *
+   * Both draw at `inset: 0` rather than the negative inset `.ring-spin` uses,
+   * because `.btn` carries a clip-path and clip-path clips pseudo-elements too —
+   * anything hanging outside the edge is simply cut away.
+   *
+   * The states are deliberately unlike each other, not two intensities of one
+   * thing: recording is hot, fast and circling (the universal "we are live"
+   * signal), while processing is cool, linear and unhurried. Someone glancing
+   * at the button should know which is happening without reading it.
+   *
+   * Note the `prefers-reduced-motion` block further down disables all of this,
+   * which is why each state's LABEL also names itself — the animation is the
+   * emphasis, never the only cue.
+   */
+  .rec-live::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    padding: 2px;
+    background: conic-gradient(
+      from var(--ring-angle, 0deg),
+      transparent 0deg, #FF3B30 45deg, #FFB020 95deg, transparent 150deg,
+      transparent 210deg, #FF3B30 255deg, #FFB020 305deg, transparent 360deg
+    );
+    -webkit-mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+    /* Well under ring-spin's 3.2s — urgency is the message. */
+    animation: ring-rotate 1.3s linear infinite;
+    pointer-events: none;
+  }
+
+  /* A highlight sweeping across the face, under the ring above. */
+  .rec-live::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      100deg,
+      transparent 25%,
+      rgb(255 255 255 / 0.22) 50%,
+      transparent 75%
+    );
+    background-size: 250% 100%;
+    animation: rec-shimmer 1.6s linear infinite;
+    pointer-events: none;
+  }
+
+  .rec-thinking::after {
+    content: '';
+    position: absolute;
+    inset: auto 0 0 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--plasma), transparent);
+    animation: rec-progress 1.15s ease-in-out infinite;
+    pointer-events: none;
+  }
+
   /* --- Type ------------------------------------------------------------- */
 
   .neon {
@@ -352,6 +411,22 @@
 
 @keyframes ring-rotate {
   to { --ring-angle: 360deg; }
+}
+
+/* Recording: a highlight travelling across the button face. */
+@keyframes rec-shimmer {
+  from { background-position: 140% 0; }
+  to   { background-position: -140% 0; }
+}
+
+/*
+ * Processing: an indeterminate bar. Deliberately indeterminate — transcription
+ * plus extraction is two model calls of unknown length, so a percentage would
+ * be a lie and a spinner alone doesn't say "still going".
+ */
+@keyframes rec-progress {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
 }
 
 @keyframes grid-drift {
