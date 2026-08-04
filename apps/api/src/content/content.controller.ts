@@ -26,7 +26,7 @@ import { ExportService } from '../database/export.service';
 import type { Pun } from '@scrapyard/shared';
 import { AchievementsService } from '../achievements/achievements.service';
 import { MetricsService } from '../metrics/metrics.service';
-import { RACERS } from '../users/users.service';
+import { RACER_NAMES } from '../common/racers';
 
 export class CreatePunDto {
   @IsString() @MinLength(3) @MaxLength(160)
@@ -92,7 +92,7 @@ export class AdminContentController {
       return { id, items: await this.metrics.definitions() };
     }
     if (id === 'racers') {
-      return { id, items: [...RACERS].map((name) => ({ name })) };
+      return { id, items: RACER_NAMES.map((name) => ({ name })) };
     }
     return { id, items: [] };
   }

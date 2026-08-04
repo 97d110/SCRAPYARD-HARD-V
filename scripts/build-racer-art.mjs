@@ -49,13 +49,16 @@ const OUT = join(ROOT, 'apps', 'web', 'src', 'assets', 'racers');
  * preview — 224 on a 2× display, so 256 is the ceiling worth keeping.
  *
  * Vehicles are smaller than portraits, not larger: the car rides as a badge on
- * the bottom-left of the avatar circle at roughly half its size, so the biggest
- * it ever draws is ~56px (112 × 0.5), or 112 at 2×. 128 covers that with room
- * to spare, and 64 serves every list-sized avatar.
+ * the bottom-left of the avatar circle at a fraction of its size. The largest
+ * avatar is 112px, so even at a generous 40% the badge draws at 45px — 90 at 2×.
+ *
+ * Sized to cover any ratio up to 40% deliberately, so the badge's proportion
+ * stays a single CSS constant that can be tuned by eye without regenerating a
+ * single file. Assets and layout decisions shouldn't be coupled.
  */
 const VARIANTS = {
   portrait: [96, 256],
-  vehicle: [64, 128],
+  vehicle: [48, 96],
 };
 const QUALITY = 82;
 

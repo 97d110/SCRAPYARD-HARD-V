@@ -74,6 +74,14 @@ export interface UserDoc {
    */
   raceColor: RaceColor;
   hebrewAliases: string[];
+  /**
+   * Whether this racer's character art outranks their photo. Plaintext and
+   * trivial, but note what it deliberately is NOT: an image path. Art is
+   * resolved client-side from `favoriteRacer`'s slug, so re-optimising or
+   * renaming assets never touches stored data — and art added later starts
+   * showing by itself for everyone who opted in.
+   */
+  useRacerArt: boolean;
   createdAt: string;
   updatedAt: string;
   /** Absent for a racer who has never signed in. */

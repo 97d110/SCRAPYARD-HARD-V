@@ -13,6 +13,7 @@ import {
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsEmail,
   IsIn,
   IsOptional,
@@ -23,7 +24,8 @@ import {
 import { AdminGuard, CurrentUser, JwtAuthGuard } from '../auth/guards';
 import { ClientId } from '../live/client-id.decorator';
 import { LiveGateway } from '../live/live.gateway';
-import { RACERS, UsersService } from './users.service';
+import { UsersService } from './users.service';
+import { RACERS, RACER_NAMES } from '../common/racers';
 import { RACE_COLORS } from '../common/race-colors';
 import { AchievementsService } from '../achievements/achievements.service';
 import type { ProfileBundle, PublicUser, RaceColor } from '@scrapyard/shared';
@@ -39,12 +41,16 @@ export class UpdateProfileDto {
   @IsOptional() @IsString() @MaxLength(120)
   tagline?: string;
 
-  @IsOptional() @IsIn(RACERS as unknown as string[])
+  @IsOptional() @IsIn(RACER_NAMES)
   favoriteRacer?: string;
 
   /** One of the four in-game car colours — also the racer's colour app-wide. */
   @IsOptional() @IsIn(RACE_COLORS as unknown as string[])
   raceColor?: RaceColor;
+
+  /** Show this racer's art instead of the photo. See ProfilePatch. */
+  @IsOptional() @IsBoolean()
+  useRacerArt?: boolean;
 
   /** Trimmed, de-duplicated and length-checked in the service. */
   @IsOptional() @IsArray() @ArrayMaxSize(12) @IsString({ each: true }) @MaxLength(40, { each: true })
@@ -135,8 +141,10 @@ export class UsersController {
 
   /** Options the profile editor renders. */
   @Get('options')
-  options(): { racers: string[] } {
-    return { racers: [...RACERS] };
+  options(): { racers: Array<{ name: string; slug: string }> } {
+    // Slugs travel with the names: the client keys art off them, and deriving
+    // them separately would risk two slugify implementations disagreeing.
+    return { racers: RACERS.map((racer) => ({ ...racer })) };
   }
 
   /** Anyone signed in can view anyone's achievements page. */

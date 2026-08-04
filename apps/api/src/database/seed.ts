@@ -24,7 +24,7 @@ import type { RaceColor } from '@scrapyard/shared';
 
 /** Cycled over the seeded crew so every racer starts with a colour picked. */
 const RACE_COLORS: RaceColor[] = ['blue', 'red', 'green', 'yellow'];
-import { RACERS } from '../users/users.service';
+import { RACER_NAMES } from '../common/racers';
 import { DEFAULT_PUNS } from '../content/content.service';
 import { killDerivedStats, tagRevengeSameDay, type KillPair } from '../common/kills';
 import { blindIndex, encryptField } from '../common/crypto';
@@ -137,9 +137,12 @@ function buildUser(spec: SeedSpec, position: number): UserDoc {
     displayName: spec.name,
     avatarUrl: '',
     tagline: spec.tagline,
-    favoriteRacer: RACERS[position % RACERS.length],
+    favoriteRacer: RACER_NAMES[position % RACER_NAMES.length],
     raceColor: RACE_COLORS[position % RACE_COLORS.length],
     hebrewAliases: spec.hebrewAliases,
+    // Seeded racers show their character art: it's the whole point of a demo
+    // roster, and the fallback covers the nine without art yet.
+    useRacerArt: true,
     createdAt: new Date(Date.now() - (90 - position) * 86_400_000).toISOString(),
     updatedAt: now,
     lastLoginAt: now,

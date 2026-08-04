@@ -308,6 +308,8 @@ export interface UserRecord {
    * Latin; plain string similarity can't bridge the two scripts.
    */
   hebrewAliases: string[];
+  /** Show `favoriteRacer`'s character art instead of the photo in `avatarUrl`. */
+  useRacerArt: boolean;
   createdAt: string;
   updatedAt: string;
   lastLoginAt?: string;
@@ -326,6 +328,7 @@ export interface PublicUser {
   favoriteRacer: string;
   raceColor: RaceColor;
   hebrewAliases: string[];
+  useRacerArt: boolean;
   createdAt: string;
   claimed: boolean;
   scores: UserScores;

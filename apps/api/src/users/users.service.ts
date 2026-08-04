@@ -11,6 +11,7 @@ import { ScoreboardRepository } from '../database/scoreboard.repository';
 import { allowedDomains, isAllowedEmail } from '../common/access';
 import { blindIndex, decryptField, encryptField } from '../common/crypto';
 import { DEFAULT_RACE_COLOR, RACE_COLORS } from '../common/race-colors';
+import { RACER_NAMES } from '../common/racers';
 import type { PublicUser, RaceColor, UserRecord, UserRole } from '@scrapyard/shared';
 import { dayKey, monthKey } from '../common/period.util';
 
@@ -19,27 +20,6 @@ function isDuplicateKey(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: number }).code === 11000;
 }
 
-/** The 16 BlazeRush pilots, plus the Star Track ships. Pure flavour. */
-export const RACERS = [
-  'Arthur',
-  'Turboboy',
-  'Hotty',
-  'Tailfin',
-  'Old Rowdy',
-  'Beast',
-  'Pushback',
-  'Arrow',
-  'Predator',
-  'Dipnoi',
-  'DriftKing',
-  'Rex',
-  'Panzerflachbagger',
-  'Dee',
-  'Twins',
-  'UFO',
-  'Mr. Shnek',
-  'Matthew Hell'
-] as const;
 
 /** Keeps one loud voice from crowding the extractor's prompt. */
 const MAX_ALIASES = 12;
@@ -59,6 +39,15 @@ export interface ProfilePatch {
   favoriteRacer?: string;
   raceColor?: RaceColor;
   hebrewAliases?: string[];
+  /**
+   * Whether `favoriteRacer`'s character art outranks the photo in `avatarUrl`.
+   *
+   * A boolean rather than an "avatar source" enum because the control is a
+   * checkbox and there are exactly two states — and because it makes the two
+   * settings independent: uploading a picture no longer has to silently switch
+   * anything off. This decides priority, not mode.
+   */
+  useRacerArt?: boolean;
 }
 
 @Injectable()
@@ -262,8 +251,10 @@ export class UsersService {
     const setOnInsert: Partial<UserDoc> = {
       displayName: input.fullName || email.split('@')[0],
       tagline: 'No health, no levelling, no brakes.',
-      favoriteRacer: RACERS[Math.floor(Math.random() * RACERS.length)],
+      favoriteRacer: RACER_NAMES[Math.floor(Math.random() * RACER_NAMES.length)],
       raceColor: DEFAULT_RACE_COLOR,
+      // Opt-in: nobody's picture changes until they tick the box themselves.
+      useRacerArt: false,
       // Left empty rather than guessed: transliterating a Google name into
       // Hebrew automatically would seed the matcher with plausible-but-wrong
       // spellings, which is worse than visibly unconfigured.
@@ -341,8 +332,9 @@ export class UsersService {
       displayName,
       avatarUrl: '',
       tagline: 'Signed up in absentia.',
-      favoriteRacer: RACERS[Math.floor(Math.random() * RACERS.length)],
+      favoriteRacer: RACER_NAMES[Math.floor(Math.random() * RACER_NAMES.length)],
       raceColor: DEFAULT_RACE_COLOR,
+      useRacerArt: false,
       // An admin can set these straight away via the roster editor, which is
       // the point: voice entry works for this racer before they ever sign in.
       hebrewAliases: [],
@@ -421,10 +413,14 @@ export class UsersService {
     }
 
     if (patch.favoriteRacer !== undefined) {
-      if (!RACERS.includes(patch.favoriteRacer as (typeof RACERS)[number])) {
+      if (!RACER_NAMES.includes(patch.favoriteRacer)) {
         throw new BadRequestException('Unknown racer');
       }
       update.favoriteRacer = patch.favoriteRacer;
+    }
+
+    if (patch.useRacerArt !== undefined) {
+      update.useRacerArt = patch.useRacerArt;
     }
 
     if (patch.raceColor !== undefined) {
@@ -521,6 +517,7 @@ export class UsersService {
       // a racer created before the colour merge has neither.
       raceColor: user.raceColor ?? DEFAULT_RACE_COLOR,
       hebrewAliases: user.hebrewAliases ?? [],
+      useRacerArt: user.useRacerArt ?? false,
       createdAt: user.createdAt,
       claimed: Boolean(user.googleId),
       scores: {
