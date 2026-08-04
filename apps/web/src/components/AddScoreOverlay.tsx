@@ -56,9 +56,14 @@ const DEFAULT_SCORE_BY_PLACE = [15, 10, 5, 0];
 const WINNER_MIN_SCORE = 15;
 
 /**
- * What a finisher's score actually resolves to: blank/0 falls back to the
- * standard purse for that place, and the winner's purse is never allowed
- * below the minimum — silently topped up rather than flagged as an error.
+ * What a finisher's score actually resolves to on SUBMIT: blank falls back to
+ * the standard purse for that place, and the winner's purse is topped up to the
+ * minimum.
+ *
+ * Not used for validation — see `enteredScores`. The top-up would hide the
+ * mistake being validated for, so by the time this runs the grid has already
+ * been proven clean and the floor only ever applies to a blank box. The server
+ * applies the same floor independently (ScoresService.validate).
  */
 function effectiveScore(raw: string, place: number): number {
   const typed = raw.trim() === '' ? 0 : Math.max(0, Number(raw) || 0);
@@ -408,6 +413,16 @@ export function AddScoreOverlay({
           `Couldn't place ${draft.unmatched.join(', ')} — add them below, or set their Hebrew name in their profile.`,
         );
       }
+      /*
+       * Land on the grid, but only on success. It's where everything voice just
+       * produced lives — the rows, the scores, the "heard as" labels and any
+       * validation flag — so reviewing it is the natural next move. A failure
+       * stays put: the picker is where you'd fix things by hand, and the error
+       * message lives there too.
+       *
+       * Desktop shows both panes at once, so this is a no-op there.
+       */
+      setStep('grid');
       setVoicePhase('done');
       // Long enough to register as finished, short enough not to sit in the way
       // of the grid it just filled.
@@ -566,24 +581,60 @@ export function AddScoreOverlay({
   );
 
   /**
-   * Lower places must score the same or less than the place ahead of them —
-   * ties are fine, an increase isn't. Keyed by the *offending* (lower-placed)
-   * racer, since that's the row that needs fixing.
+   * What's actually in the boxes: a blank still falls back to the place's
+   * standard purse, but a number that IS there is taken at face value.
+   *
+   * Validation reads this rather than `effectiveScores`, and the difference is
+   * load-bearing. The winner floor in `effectiveScore` rewrites a low first
+   * place up to the minimum, which quietly repaired the very mistake worth
+   * catching: a winner recorded as 2 became 15, so the ordering check compared
+   * 15 against the runner-up and found nothing wrong. Typed by hand that
+   * rewrite was a convenience; produced by a speech model it turns a misheard
+   * number into a plausible one and submits it unchallenged.
+   */
+  const enteredScores = useMemo(
+    () =>
+      finishers.map((f, i) => {
+        const raw = f.gameScore.trim();
+        if (raw === '') return DEFAULT_SCORE_BY_PLACE[i] ?? 0;
+        return Math.max(0, Number(raw) || 0);
+      }),
+    [finishers],
+  );
+
+  /**
+   * Everything wrong with the grid's scores, keyed by the racer whose row needs
+   * fixing. One map for both rules so the row highlight, the banner and the
+   * proceed gate can't disagree about whether there's a problem.
    */
   const scoreOrderIssues = useMemo(() => {
     const issues = new Map<string, string>();
+    const nameOf = (i: number) =>
+      usersById.get(finishers[i]?.racerId ?? '')?.displayName ?? 'This racer';
+
+    // A winner below the floor is flagged, not corrected. Only when a number was
+    // actually entered — a blank legitimately means "use the standard purse".
+    if (finishers.length > 0 && finishers[0].gameScore.trim() !== '') {
+      if (enteredScores[0] < WINNER_MIN_SCORE) {
+        issues.set(
+          finishers[0].racerId,
+          `${nameOf(0)} won, so ${enteredScores[0]} can't be right — a win scores at least ${WINNER_MIN_SCORE}. Check what was heard.`,
+        );
+      }
+    }
+
+    // Lower places must score the same or less than the place ahead of them —
+    // ties are fine, an increase isn't.
     for (let i = 1; i < finishers.length; i += 1) {
-      if (effectiveScores[i] > effectiveScores[i - 1]) {
-        const below = usersById.get(finishers[i].racerId)?.displayName ?? 'This racer';
-        const above = usersById.get(finishers[i - 1].racerId)?.displayName ?? 'the place above';
+      if (enteredScores[i] > enteredScores[i - 1]) {
         issues.set(
           finishers[i].racerId,
-          `${below} (P${i + 1}) can't outscore ${above} (P${i}) — lower places must score the same or less.`,
+          `${nameOf(i)} (P${i + 1}) can't outscore ${nameOf(i - 1)} (P${i}) — lower places must score the same or less.`,
         );
       }
     }
     return issues;
-  }, [finishers, effectiveScores, usersById]);
+  }, [finishers, enteredScores, usersById]);
 
   // Step 1 → 2: at least a winner. Step 2 → 3: the grid has to be valid —
   // there's no point reaching the kill log with a broken score order.
@@ -1186,9 +1237,11 @@ export function AddScoreOverlay({
 
             {/* RIGHT · the race. */}
             <div className="no-scrollbar flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-8 py-6">
+              {/* Above the grid, not below it and the kill log: a problem you
+                  have to scroll to find is a problem you find at submit time. */}
+              {scoreIssueBanner}
               {gridSection}
               {finishers.length > 0 && extraSection}
-              {scoreIssueBanner}
               {errorBanner}
             </div>
           </div>
@@ -1200,12 +1253,7 @@ export function AddScoreOverlay({
                 {racerPickerFields}
               </div>
             )}
-            {step === 'grid' && (
-              <>
-                {gridSection}
-                {scoreIssueBanner}
-              </>
-            )}
+            {step === 'grid' && gridSection}
             {step === 'extra' && (
               <>
                 {extraSection}
@@ -1213,6 +1261,17 @@ export function AddScoreOverlay({
               </>
             )}
           </div>
+        )}
+
+        {/*
+          Mobile: pinned above the footer rather than living inside the grid
+          step. Voice fills the grid while you're still on the racers step, so a
+          banner scoped to that step would compute the problem and then hide it
+          until you tapped Proceed — which is exactly when it's too late to be
+          useful. Outside the step switch, it's unmissable wherever you are.
+        */}
+        {!isDesktop && scoreIssueBanner && (
+          <div className="shrink-0 border-t border-hairline px-5 pt-3">{scoreIssueBanner}</div>
         )}
 
         {/* Footer — actions pinned to the bottom. */}
