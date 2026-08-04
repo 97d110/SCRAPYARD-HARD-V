@@ -108,8 +108,17 @@ export function LeaderboardTable({
     return [...raced].sort((a, b) => {
       const delta = (metricValue(a, sort.columnId) - metricValue(b, sort.columnId)) * dir;
       if (delta !== 0) return delta;
-      // Stable, meaningful tiebreak: the default metric (score), then name.
-      return b.primary - a.primary || a.displayName.localeCompare(b.displayName);
+      // Stable tiebreak chain, in rank order: most wins (`primary`, which
+      // mirrors the `wins` metric — see DEFAULT_METRIC), then fewest races
+      // (the efficient win outranks the padded one), then highest total
+      // score, then name. Whatever column got clicked as the primary sort,
+      // ties within it fall back through this same chain.
+      return (
+        b.primary - a.primary ||
+        metricValue(a, 'races') - metricValue(b, 'races') ||
+        metricValue(b, 'gameScore') - metricValue(a, 'gameScore') ||
+        a.displayName.localeCompare(b.displayName)
+      );
     });
     // `raced` is derived fresh each render; depend on the board identity instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps

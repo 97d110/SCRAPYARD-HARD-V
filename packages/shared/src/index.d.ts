@@ -220,6 +220,16 @@ export interface Rival {
 // ─── Users ─────────────────────────────────────────────────────────────────
 
 /**
+ * The in-game car colors. BlazeRush renders exactly these four — never more,
+ * never any other hue — so it's a closed set, not free text.
+ *
+ * This is a racer's own standing preference ("I always drive blue"), not
+ * per-race data, so duplicates across the roster are allowed and expected:
+ * four colors can't go around eight-plus racers.
+ */
+export type RaceColor = 'blue' | 'red' | 'green' | 'yellow';
+
+/**
  * Win counts for the periods currently on screen. A "win" is a first-place
  * finish. Historical figures come from the scoreboard endpoints.
  */
@@ -251,6 +261,15 @@ export interface UserRecord {
   tagline: string;
   favoriteRacer: string;
   accentColor: string;
+  /** The car color this racer usually drives, or null if they haven't picked. */
+  raceColor: RaceColor | null;
+  /**
+   * This racer's name in Hebrew — first name, surname, nicknames, however
+   * people actually refer to them out loud. Fed to the voice-entry extractor
+   * so spoken Hebrew can be matched back to a racer whose `displayName` is
+   * Latin; plain string similarity can't bridge the two scripts.
+   */
+  hebrewAliases: string[];
   createdAt: string;
   updatedAt: string;
   lastLoginAt?: string;
@@ -268,6 +287,8 @@ export interface PublicUser {
   tagline: string;
   favoriteRacer: string;
   accentColor: string;
+  raceColor: RaceColor | null;
+  hebrewAliases: string[];
   createdAt: string;
   claimed: boolean;
   scores: UserScores;

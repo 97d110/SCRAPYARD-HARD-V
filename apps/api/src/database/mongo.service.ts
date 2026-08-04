@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { Collection, Db, IndexDescription, MongoClient } from 'mongodb';
-import type { UserRole } from '@scrapyard/shared';
+import type { RaceColor, UserRole } from '@scrapyard/shared';
 
 /**
  * The database. A handful of collections, no derived state.
@@ -64,6 +64,13 @@ export interface UserDoc {
   tagline: string;
   favoriteRacer: string;
   accentColor: string;
+  /**
+   * Plaintext, like `displayName` and `googleFullName` beside it — these are
+   * already shown to every signed-in teammate, so the encryption rule above
+   * (email and Google id only) deliberately doesn't extend to them.
+   */
+  raceColor: RaceColor | null;
+  hebrewAliases: string[];
   createdAt: string;
   updatedAt: string;
   /** Absent for a racer who has never signed in. */

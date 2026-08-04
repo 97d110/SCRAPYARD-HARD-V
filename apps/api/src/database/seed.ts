@@ -20,6 +20,10 @@ import '../common/load-env';
 import { randomUUID } from 'crypto';
 import { MongoClient } from 'mongodb';
 import type { UserDoc, GameDoc, MetricDoc, AchievementRuleDoc } from './mongo.service';
+import type { RaceColor } from '@scrapyard/shared';
+
+/** Cycled over the seeded crew so every racer starts with a colour picked. */
+const RACE_COLORS: RaceColor[] = ['blue', 'red', 'green', 'yellow'];
 import { ACCENT_COLORS, RACERS } from '../users/users.service';
 import { DEFAULT_PUNS } from '../content/content.service';
 import { killDerivedStats, tagRevengeSameDay, type KillPair } from '../common/kills';
@@ -40,17 +44,24 @@ interface SeedSpec {
   name: string;
   tagline: string;
   role?: 'admin' | 'racer';
+  /**
+   * How this racer's name is actually said out loud, in Hebrew. Seeded because
+   * voice entry can't match spoken Hebrew against a Latin `displayName` without
+   * it — an empty roster of aliases makes the feature look broken rather than
+   * unconfigured.
+   */
+  hebrewAliases: string[];
 }
 
 const SEEDS: SeedSpec[] = [
-  { slug: 'amit', name: 'Amit Nino', tagline: 'Ships code, ships Arthur, ships everyone off the track.', role: 'admin' },
-  { slug: 'dana', name: 'Dana Kessler', tagline: 'Brakes? In this economy?' },
-  { slug: 'noam', name: 'Noam Barak', tagline: 'Professional mine-avoider. Amateur mine-finder.' },
-  { slug: 'yael', name: 'Yael Doron', tagline: 'Drifts on ice, thrives on chaos.' },
-  { slug: 'omer', name: 'Omer Ziv', tagline: 'The rocket and I are on a first-name basis.' },
-  { slug: 'lior', name: 'Lior Shani', tagline: 'Last place is just first place from the other end.' },
-  { slug: 'tamar', name: 'Tamar Peled', tagline: 'Chain lightning enthusiast.' },
-  { slug: 'gil', name: 'Gil Avraham', tagline: 'New to the yard. Already dangerous.' },
+  { slug: 'amit', name: 'Amit Nino', tagline: 'Ships code, ships Arthur, ships everyone off the track.', role: 'admin', hebrewAliases: ['עמית', 'נינו', 'עמית נינו'] },
+  { slug: 'dana', name: 'Dana Kessler', tagline: 'Brakes? In this economy?', hebrewAliases: ['דנה', 'קסלר', 'דנה קסלר'] },
+  { slug: 'noam', name: 'Noam Barak', tagline: 'Professional mine-avoider. Amateur mine-finder.', hebrewAliases: ['נועם', 'ברק', 'נועם ברק'] },
+  { slug: 'yael', name: 'Yael Doron', tagline: 'Drifts on ice, thrives on chaos.', hebrewAliases: ['יעל', 'דורון', 'יעל דורון'] },
+  { slug: 'omer', name: 'Omer Ziv', tagline: 'The rocket and I are on a first-name basis.', hebrewAliases: ['עומר', 'זיו', 'עומר זיו'] },
+  { slug: 'lior', name: 'Lior Shani', tagline: 'Last place is just first place from the other end.', hebrewAliases: ['ליאור', 'שני', 'ליאור שני'] },
+  { slug: 'tamar', name: 'Tamar Peled', tagline: 'Chain lightning enthusiast.', hebrewAliases: ['תמר', 'פלד', 'תמר פלד'] },
+  { slug: 'gil', name: 'Gil Avraham', tagline: 'New to the yard. Already dangerous.', hebrewAliases: ['גיל', 'אברהם', 'גיל אברהם'] },
 ];
 
 const id = (slug: string) => `seed-${slug}`;
@@ -128,6 +139,8 @@ function buildUser(spec: SeedSpec, position: number): UserDoc {
     tagline: spec.tagline,
     favoriteRacer: RACERS[position % RACERS.length],
     accentColor: ACCENT_COLORS[position % ACCENT_COLORS.length],
+    raceColor: RACE_COLORS[position % RACE_COLORS.length],
+    hebrewAliases: spec.hebrewAliases,
     createdAt: new Date(Date.now() - (90 - position) * 86_400_000).toISOString(),
     updatedAt: now,
     lastLoginAt: now,

@@ -11,6 +11,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsEmail,
   IsHexColor,
   IsIn,
@@ -18,13 +20,14 @@ import {
   IsString,
   MaxLength,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 import { AdminGuard, CurrentUser, JwtAuthGuard } from '../auth/guards';
 import { ClientId } from '../live/client-id.decorator';
 import { LiveGateway } from '../live/live.gateway';
-import { ACCENT_COLORS, RACERS, UsersService } from './users.service';
+import { ACCENT_COLORS, RACE_COLORS, RACERS, UsersService } from './users.service';
 import { AchievementsService } from '../achievements/achievements.service';
-import type { ProfileBundle, PublicUser } from '@scrapyard/shared';
+import type { ProfileBundle, PublicUser, RaceColor } from '@scrapyard/shared';
 
 export class UpdateProfileDto {
   @IsOptional() @IsString() @MinLength(2) @MaxLength(40)
@@ -42,6 +45,18 @@ export class UpdateProfileDto {
 
   @IsOptional() @IsHexColor()
   accentColor?: string;
+
+  /**
+   * `ValidateIf` rather than `IsOptional`, because null is a meaningful value
+   * here — it clears the pick — and `IsOptional` would skip validating it.
+   */
+  @ValidateIf((_, value) => value !== null && value !== undefined)
+  @IsIn(RACE_COLORS as unknown as string[])
+  raceColor?: RaceColor | null;
+
+  /** Trimmed, de-duplicated and length-checked in the service. */
+  @IsOptional() @IsArray() @ArrayMaxSize(12) @IsString({ each: true }) @MaxLength(40, { each: true })
+  hebrewAliases?: string[];
 }
 
 export class CreateRacerDto {
@@ -79,6 +94,27 @@ export class AdminUsersController {
       userId: created.id,
     });
     return created;
+  }
+
+  /**
+   * Admin: edit any racer's profile.
+   *
+   * The self-only rule on `PATCH /users/:id` is the right default, but it left
+   * no way to fill in the fields voice entry depends on for a racer who hasn't
+   * signed in yet — an unclaimed seat can't edit itself. Same DTO and same
+   * service method, so validation can't drift between the two routes.
+   */
+  @Patch(':id')
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateProfileDto,
+    @ClientId() origin?: string,
+  ): Promise<PublicUser> {
+    const updated = await this.users.updateProfile(id, dto);
+    // Same reason code as a self-edit — it's the same kind of change to the
+    // same fields, and every client refreshes the roster identically either way.
+    this.live.broadcast({ type: 'roster:changed', origin, reason: 'profile', userId: id });
+    return updated;
   }
 
   /** Undo a typo. Only works while the seat is unclaimed and has no wins. */

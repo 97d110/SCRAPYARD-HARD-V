@@ -10,7 +10,7 @@ import { MongoService, UserDoc } from '../database/mongo.service';
 import { ScoreboardRepository } from '../database/scoreboard.repository';
 import { allowedDomains, isAllowedEmail } from '../common/access';
 import { blindIndex, decryptField, encryptField } from '../common/crypto';
-import type { PublicUser, UserRecord, UserRole } from '@scrapyard/shared';
+import type { PublicUser, RaceColor, UserRecord, UserRole } from '@scrapyard/shared';
 import { dayKey, monthKey } from '../common/period.util';
 
 /** Mongo's duplicate-key error, without importing the driver's error classes. */
@@ -51,6 +51,17 @@ export const ACCENT_COLORS = [
   '#00FFA3',
 ] as const;
 
+/**
+ * The four in-game car colors. Distinct from ACCENT_COLORS above: that's the
+ * racer's neon theme across the UI, this is which car they actually drive.
+ * Duplicates across the roster are fine — four colors, more racers than that.
+ */
+export const RACE_COLORS = ['blue', 'red', 'green', 'yellow'] as const;
+
+/** Keeps one loud voice from crowding the extractor's prompt. */
+const MAX_ALIASES = 12;
+const MAX_ALIAS_LENGTH = 40;
+
 export interface UpsertFromGoogleInput {
   googleId: string;
   email: string;
@@ -64,6 +75,9 @@ export interface ProfilePatch {
   tagline?: string;
   favoriteRacer?: string;
   accentColor?: string;
+  /** null clears the pick — "I don't have a usual color". */
+  raceColor?: RaceColor | null;
+  hebrewAliases?: string[];
 }
 
 @Injectable()
@@ -269,6 +283,11 @@ export class UsersService {
       tagline: 'No health, no levelling, no brakes.',
       favoriteRacer: RACERS[Math.floor(Math.random() * RACERS.length)],
       accentColor: ACCENT_COLORS[Math.floor(Math.random() * ACCENT_COLORS.length)],
+      // Both deliberately left empty rather than guessed: a wrong "usual
+      // colour" is noise, and transliterating a Google name into Hebrew
+      // automatically would seed the matcher with plausible-but-wrong spellings.
+      raceColor: null,
+      hebrewAliases: [],
       createdAt: now,
     };
     if (backfill.avatarUrl === undefined) {
@@ -344,6 +363,10 @@ export class UsersService {
       tagline: 'Signed up in absentia.',
       favoriteRacer: RACERS[Math.floor(Math.random() * RACERS.length)],
       accentColor: ACCENT_COLORS[Math.floor(Math.random() * ACCENT_COLORS.length)],
+      // An admin can fill these in straight away via the roster editor, which
+      // is the point: voice entry works for this racer before they ever sign in.
+      raceColor: null,
+      hebrewAliases: [],
       createdAt: now,
       updatedAt: now,
     };
@@ -433,6 +456,35 @@ export class UsersService {
       update.accentColor = color;
     }
 
+    if (patch.raceColor !== undefined) {
+      if (patch.raceColor !== null && !RACE_COLORS.includes(patch.raceColor)) {
+        throw new BadRequestException('Race colour must be blue, red, green or yellow');
+      }
+      update.raceColor = patch.raceColor;
+    }
+
+    if (patch.hebrewAliases !== undefined) {
+      // Trim, drop blanks, then de-duplicate case-insensitively. Order is kept
+      // so the racer's own preferred spelling stays first in the prompt.
+      const seen = new Set<string>();
+      const aliases: string[] = [];
+      for (const raw of patch.hebrewAliases) {
+        const alias = raw.trim();
+        if (!alias) continue;
+        if (alias.length > MAX_ALIAS_LENGTH) {
+          throw new BadRequestException(`Each name must be ${MAX_ALIAS_LENGTH} characters or fewer`);
+        }
+        const key = alias.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        aliases.push(alias);
+      }
+      if (aliases.length > MAX_ALIASES) {
+        throw new BadRequestException(`Keep it to ${MAX_ALIASES} names or fewer`);
+      }
+      update.hebrewAliases = aliases;
+    }
+
     await users.updateOne({ _id: id }, { $set: update });
 
     /*
@@ -488,6 +540,9 @@ export class UsersService {
       tagline: user.tagline,
       favoriteRacer: user.favoriteRacer,
       accentColor: user.accentColor,
+      // `?? null` / `?? []` cover documents written before these fields existed.
+      raceColor: user.raceColor ?? null,
+      hebrewAliases: user.hebrewAliases ?? [],
       createdAt: user.createdAt,
       claimed: Boolean(user.googleId),
       scores: {

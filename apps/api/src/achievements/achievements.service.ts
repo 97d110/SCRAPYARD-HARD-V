@@ -288,6 +288,8 @@ export class AchievementsService {
   }
 
   private asResult(row: ParticipationRow): GameResult {
+    // A throwaway shim for formula math only — color is irrelevant here and
+    // never read, so any valid value satisfies the type.
     return { racerId: '', place: row.place, gameScore: row.gameScore, stats: row.stats };
   }
 

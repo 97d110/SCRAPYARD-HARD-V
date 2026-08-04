@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown, ChevronUp, Crown, GripVertical, Plus, Search, Skull, Trophy, X } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Crown,
+  GripVertical,
+  Plus,
+  Search,
+  Skull,
+  Trophy,
+  X,
+} from 'lucide-react';
 import { Avatar, Label, NeonButton, Panel, withGlow } from './ui/primitives';
 import { api } from '../lib/api';
 import type { GameResultInput, KillEventInput, MetricDef, PublicUser } from '@scrapyard/shared';
@@ -404,23 +415,25 @@ export function AddScoreOverlay({
   const racerPickerFields = (
     <>
       {/* Search. */}
-      <div className="relative shrink-0">
-        <Search
-          size={16}
-          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-faint)]"
-        />
-        <input
-          ref={searchRef}
-          className="field !pl-10"
-          placeholder={
-            finishers.length >= 4
-              ? 'Grid full — remove a car to swap one in'
-              : 'Name, email or ride…'
-          }
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          disabled={phase !== 'idle'}
-        />
+      <div className="shrink-0 space-y-2">
+        <div className="relative">
+          <Search
+            size={16}
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-faint)]"
+          />
+          <input
+            ref={searchRef}
+            className="field !pl-10"
+            placeholder={
+              finishers.length >= 4
+                ? 'Grid full — remove a car to swap one in'
+                : 'Name, email or ride…'
+            }
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            disabled={phase !== 'idle'}
+          />
+        </div>
       </div>
 
       {/* Roster. */}
@@ -512,14 +525,14 @@ export function AddScoreOverlay({
             const user = usersById.get(finisher.racerId);
             if (!user) return null;
             const medal = PLACE_COLOR[Math.min(index, PLACE_COLOR.length - 1)];
-            const scoreIssue = scoreOrderIssues.get(finisher.racerId);
+            const rowIssue = scoreOrderIssues.get(finisher.racerId);
             return (
               <div
                 key={finisher.racerId}
                 className={`border bg-white/[0.015] p-3 transition ${
                   dragIndex === index
                     ? 'border-plasma/60 opacity-50'
-                    : scoreIssue
+                    : rowIssue
                       ? 'score-order-flicker border-danger/70'
                       : 'border-hairline'
                 }`}
@@ -607,7 +620,7 @@ export function AddScoreOverlay({
                       max={999}
                       inputMode="numeric"
                       className={`field !w-[4.5rem] !px-2 !py-1.5 text-right font-mono text-sm ${
-                        scoreIssue ? '!border-danger/70' : ''
+                        rowIssue ? '!border-danger/70' : ''
                       }`}
                       placeholder={String(DEFAULT_SCORE_BY_PLACE[index] ?? 0)}
                       value={finisher.gameScore}
