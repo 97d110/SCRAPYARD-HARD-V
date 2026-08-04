@@ -22,6 +22,7 @@ import {
   Panel,
   Stat,
 } from '../components/ui/primitives';
+import { RACE_COLOR_HEX, RACE_COLORS } from '../lib/raceColors';
 import type {
   GameParticipation,
   ProfileBundle,
@@ -29,20 +30,6 @@ import type {
   RaceColor,
   Rival,
 } from '@scrapyard/shared';
-
-/**
- * The four in-game car colours, with the hexes the game actually renders.
- * Written out literally rather than interpolated so Tailwind's scanner isn't
- * involved at all — these are inline styles, but the lesson from the
- * `.btn-primary` purge is worth keeping in mind near any generated class name.
- */
-const RACE_COLORS: RaceColor[] = ['blue', 'red', 'green', 'yellow'];
-const RACE_COLOR_HEX: Record<RaceColor, string> = {
-  blue: '#2F6FED',
-  red: '#FF3B30',
-  green: '#2ECC71',
-  yellow: '#FFD60A',
-};
 
 /**
  * Racer profile. Public for everyone (achievements included); the edit panel

@@ -288,6 +288,18 @@ export const api = {
     deleteRacer: (id: string) =>
       request<void>(`/admin/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
+    /**
+     * Edit any racer's profile. Same payload and same server-side validation as
+     * a racer editing their own — the difference is only who's allowed to call
+     * it. Exists because the fields voice entry depends on are useless if a
+     * racer who hasn't signed in yet can't have them filled in for them.
+     */
+    updateRacer: (id: string, patch: Record<string, unknown>) =>
+      request<PublicUser>(`/admin/users/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+
     exportSummary: () => request<ExportSummary>('/admin/export/summary'),
 
     /**

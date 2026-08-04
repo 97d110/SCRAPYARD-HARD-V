@@ -54,6 +54,7 @@ import {
   Panel,
   Segmented,
 } from '../components/ui/primitives';
+import { RACE_COLOR_HEX, RACE_COLORS } from '../lib/raceColors';
 import type {
   AchievementRule,
   AchievementScope,
@@ -65,6 +66,7 @@ import type {
   MetricDef,
   PublicUser,
   Pun,
+  RaceColor,
 } from '@scrapyard/shared';
 
 const ICONS: Record<string, LucideIcon> = {
@@ -873,6 +875,7 @@ function CrewEditor({ onBack }: { onBack: () => void }) {
               onConfirm={() => setConfirmingId(user.id)}
               onCancel={() => setConfirmingId(null)}
               onDelete={() => void remove(user.id)}
+              onSaved={refreshUsers}
             />
           ))}
         </div>
@@ -885,7 +888,9 @@ function CrewEditor({ onBack }: { onBack: () => void }) {
             <p className="text-sm text-[var(--text-faint)]">Nobody has signed in yet.</p>
           </Panel>
         ) : (
-          claimed.map((user) => <CrewRow key={user.id} user={user} busy={busy} />)
+          claimed.map((user) => (
+            <CrewRow key={user.id} user={user} busy={busy} onSaved={refreshUsers} />
+          ))
         )}
       </div>
     </div>
@@ -896,6 +901,12 @@ function CrewEditor({ onBack }: { onBack: () => void }) {
  * One roster line. Delete is only offered for an unclaimed seat, and only
  * behind a confirm — the server refuses anything else anyway, but an
  * unreachable button is a clearer statement of the rule than an error toast.
+ *
+ * The expandable editor covers only the two fields an admin genuinely needs to
+ * set on someone else's behalf: the Hebrew names voice entry matches against,
+ * and the car colour. Display name, avatar and tagline are deliberately left
+ * out — those are the racer's own to choose, and there's no operational reason
+ * for an admin to be able to rewrite them.
  */
 function CrewRow({
   user,
@@ -904,6 +915,7 @@ function CrewRow({
   onConfirm,
   onCancel,
   onDelete,
+  onSaved,
 }: {
   user: PublicUser;
   busy: boolean;
@@ -911,70 +923,222 @@ function CrewRow({
   onConfirm?: () => void;
   onCancel?: () => void;
   onDelete?: () => void;
+  onSaved?: () => Promise<unknown> | void;
 }) {
   const deletable = !user.claimed && user.scores.allTime === 0 && onConfirm;
+
+  const [editing, setEditing] = useState(false);
+  const [aliases, setAliases] = useState(user.hebrewAliases.join(', '));
+  const [raceColor, setRaceColor] = useState<RaceColor | null>(user.raceColor);
+  const [saving, setSaving] = useState(false);
+  const [rowError, setRowError] = useState<string | null>(null);
+
+  // Reseed the draft whenever the row opens, so it reflects whatever the last
+  // save (or someone else's edit, arriving over the live socket) left behind.
+  const open = () => {
+    setAliases(user.hebrewAliases.join(', '));
+    setRaceColor(user.raceColor);
+    setRowError(null);
+    setEditing(true);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setRowError(null);
+    try {
+      await api.admin.updateRacer(user.id, {
+        raceColor,
+        hebrewAliases: aliases
+          .split(',')
+          .map((alias) => alias.trim())
+          .filter(Boolean),
+      });
+      await onSaved?.();
+      setEditing(false);
+    } catch (caught) {
+      setRowError(caught instanceof Error ? caught.message : 'Could not save');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <Panel
       accent={user.accentColor}
-      className={`flex flex-wrap items-center gap-3 p-3.5 ${user.claimed ? '' : 'opacity-90'}`}
+      className={`p-3.5 ${user.claimed ? '' : 'opacity-90'}`}
     >
-      <Avatar
-        src={user.avatarUrl || undefined}
-        name={user.displayName}
-        accent={user.accentColor}
-        size={36}
-      />
+      <div className="flex flex-wrap items-center gap-3">
+        <Avatar
+          src={user.avatarUrl || undefined}
+          name={user.displayName}
+          accent={user.accentColor}
+          size={36}
+        />
 
-      <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-2">
-          <span className="truncate font-display text-[0.82rem] font-bold text-white">
-            {user.displayName}
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-2">
+            <span className="truncate font-display text-[0.82rem] font-bold text-white">
+              {user.displayName}
+            </span>
+            {user.role === 'admin' && (
+              <span className="text-[0.5rem] uppercase tracking-widest text-[var(--text-faint)]">
+                admin
+              </span>
+            )}
+            {!user.claimed && (
+              <span
+                className="rounded-sm px-1.5 py-0.5 text-[0.5rem] uppercase tracking-widest"
+                style={{ color: ACCENTS.crew, border: `1px solid ${ACCENTS.crew}55` }}
+              >
+                unclaimed
+              </span>
+            )}
+            {/*
+              A missing alias list is the actionable state on this screen: that
+              racer cannot be picked up by voice entry at all. Flagged rather
+              than left for someone to infer from an empty editor.
+            */}
+            {user.hebrewAliases.length === 0 && (
+              <span
+                className="rounded-sm px-1.5 py-0.5 text-[0.5rem] uppercase tracking-widest"
+                style={{ color: '#FFB020', border: '1px solid #FFB02055' }}
+                title="Voice entry can't match this racer until they have a Hebrew name"
+              >
+                no hebrew name
+              </span>
+            )}
           </span>
-          {user.role === 'admin' && (
-            <span className="text-[0.5rem] uppercase tracking-widest text-[var(--text-faint)]">
-              admin
+          <span className="block truncate text-[0.68rem] text-[var(--text-faint)]">
+            {user.email}
+            {user.hebrewAliases.length > 0 && (
+              <span dir="rtl" className="ml-2 text-[var(--text-dim)]">
+                · {user.hebrewAliases.join(', ')}
+              </span>
+            )}
+          </span>
+        </span>
+
+        {user.raceColor && (
+          <span
+            className="h-4 w-4 shrink-0 rounded-full"
+            style={{
+              background: RACE_COLOR_HEX[user.raceColor],
+              boxShadow: `0 0 8px ${RACE_COLOR_HEX[user.raceColor]}`,
+            }}
+            title={`Drives ${user.raceColor}`}
+          />
+        )}
+
+        <span className="stat-number text-lg text-white">{user.scores.allTime}</span>
+
+        {onSaved && (
+          <button
+            onClick={() => (editing ? setEditing(false) : open())}
+            disabled={busy}
+            aria-label={`Edit ${user.displayName}`}
+            aria-expanded={editing}
+            className={`p-2 transition ${editing ? 'text-plasma' : 'text-[var(--text-faint)] hover:text-white'}`}
+          >
+            {editing ? <X size={15} /> : <Pencil size={15} />}
+          </button>
+        )}
+
+        {deletable &&
+          (confirming ? (
+            <span className="flex items-center gap-1.5">
+              <NeonButton accent="#FF3B30" disabled={busy} onClick={onDelete}>
+                <Trash2 size={13} /> Remove
+              </NeonButton>
+              <button
+                onClick={onCancel}
+                className="px-2 text-[0.62rem] uppercase tracking-widest text-[var(--text-faint)] transition hover:text-white"
+              >
+                Cancel
+              </button>
             </span>
-          )}
-          {!user.claimed && (
-            <span
-              className="rounded-sm px-1.5 py-0.5 text-[0.5rem] uppercase tracking-widest"
-              style={{ color: ACCENTS.crew, border: `1px solid ${ACCENTS.crew}55` }}
+          ) : (
+            <button
+              onClick={onConfirm}
+              disabled={busy}
+              aria-label={`Remove ${user.displayName}`}
+              className="p-2 text-[var(--text-faint)] transition hover:text-[#FF3B30]"
             >
-              unclaimed
-            </span>
+              <Trash2 size={15} />
+            </button>
+          ))}
+      </div>
+
+      {editing && (
+        <div className="mt-3.5 space-y-3 border-t border-hairline pt-3.5">
+          <div>
+            <Label className="mb-1.5">Name in Hebrew</Label>
+            <input
+              className="field"
+              dir="rtl"
+              placeholder="עמית, נינו, עמית נינו"
+              value={aliases}
+              onChange={(event) => setAliases(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !saving) void save();
+              }}
+              autoFocus
+            />
+            <p className="mt-1.5 text-[0.65rem] text-[var(--text-faint)]">
+              Comma-separated. First name, surname, nicknames — whatever the crew says out loud
+              when they call the results.
+            </p>
+          </div>
+
+          <div>
+            <Label className="mb-1.5">Car colour</Label>
+            <div className="flex flex-wrap items-center gap-2">
+              {RACE_COLORS.map((color) => {
+                const active = raceColor === color;
+                return (
+                  <button
+                    key={color}
+                    type="button"
+                    onClick={() => setRaceColor(active ? null : color)}
+                    aria-label={color}
+                    aria-pressed={active}
+                    title={active ? `${color} — tap to clear` : color}
+                    className="h-7 w-7 rounded-full transition-transform hover:scale-110"
+                    style={{
+                      background: RACE_COLOR_HEX[color],
+                      boxShadow: active
+                        ? `0 0 0 2px #fff, 0 0 16px ${RACE_COLOR_HEX[color]}`
+                        : `0 0 8px ${RACE_COLOR_HEX[color]}88`,
+                      opacity: active ? 1 : 0.45,
+                    }}
+                  />
+                );
+              })}
+              <span className="font-mono text-[0.6rem] text-[var(--text-faint)]">
+                {raceColor ? 'tap again to clear' : 'optional'}
+              </span>
+            </div>
+          </div>
+
+          {rowError && (
+            <p className="flex items-center gap-2 text-[0.72rem] text-[#FF6B6B]">
+              <TriangleAlert size={13} /> {rowError}
+            </p>
           )}
-        </span>
-        <span className="block truncate text-[0.68rem] text-[var(--text-faint)]">
-          {user.email}
-        </span>
-      </span>
 
-      <span className="stat-number text-lg text-white">{user.scores.allTime}</span>
-
-      {deletable &&
-        (confirming ? (
-          <span className="flex items-center gap-1.5">
-            <NeonButton accent="#FF3B30" disabled={busy} onClick={onDelete}>
-              <Trash2 size={13} /> Remove
+          <div className="flex gap-2">
+            <NeonButton accent={ACCENTS.crew} disabled={saving} onClick={() => void save()}>
+              {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+              Save
             </NeonButton>
             <button
-              onClick={onCancel}
-              className="px-2 text-[0.62rem] uppercase tracking-widest text-[var(--text-faint)] transition hover:text-white"
+              onClick={() => setEditing(false)}
+              className="px-3 text-[0.62rem] uppercase tracking-widest text-[var(--text-faint)] transition hover:text-white"
             >
               Cancel
             </button>
-          </span>
-        ) : (
-          <button
-            onClick={onConfirm}
-            disabled={busy}
-            aria-label={`Remove ${user.displayName}`}
-            className="p-2 text-[var(--text-faint)] transition hover:text-[#FF3B30]"
-          >
-            <Trash2 size={15} />
-          </button>
-        ))}
+          </div>
+        </div>
+      )}
     </Panel>
   );
 }
