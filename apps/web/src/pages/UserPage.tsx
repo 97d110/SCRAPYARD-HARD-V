@@ -744,15 +744,27 @@ function ProfileEditor({
    */
   const [hebrewAliases, setHebrewAliases] = useState(user.hebrewAliases.join(', '));
   const [useRacerArt, setUseRacerArt] = useState(user.useRacerArt);
+  const [options, setOptions] = useState<{ racers: RacerOption[] } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
   /* Live preview: the panel, avatar ring and Save button all take the colour
    * being previewed, not the saved one, so the choice is visible before saving. */
   const previewAccent = RACE_COLOR_HEX[raceColor];
 
   /*
-   * The editor holds an unsaved racer NAME, while art is keyed by slug — and the
-   * mapping lives on the server, arriving with `options`. Falls back to the slug
-   * the server already sent for this user, which is correct for the common case
-   * of opening the editor without changing racer.
+   * Below `options` on purpose — it reads it, and this runs during render.
+   *
+   * A closure over a later `const` compiles fine, which is why TypeScript said
+   * nothing; the temporal dead zone only bites because `preview` CALLS this
+   * before that line has executed. Declaration order is load-bearing here, not
+   * cosmetic.
+   *
+   * The editor holds an unsaved racer NAME while art is keyed by slug, and the
+   * mapping arrives with `options`. Falls back to the slug the server already
+   * sent, which is right for the common case of opening the editor and not
+   * changing racer at all.
    */
   const racerSlugFor = (name: string): string =>
     options?.racers.find((racer) => racer.name === name)?.slug ?? user.racerSlug;
@@ -767,10 +779,6 @@ function ProfileEditor({
     racerSlug: racerSlugFor(favoriteRacer),
     useRacerArt,
   });
-  const [options, setOptions] = useState<{ racers: RacerOption[] } | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     void api.profileOptions().then(setOptions).catch(() => setOptions(null));
