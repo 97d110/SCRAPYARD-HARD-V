@@ -70,6 +70,18 @@ REFERENCE = ["Beast", "Dee", "Driftking", "Hotty", "Rex", "Turboboy", "Twins", "
 MAX_STRETCH = 2.2
 CAST_STRENGTH = 0.8      # how much of the measured colour cast to remove
 
+# Kinds this script will touch unless asked otherwise.
+#
+# Head-shots are NOT in this list. Every automatic grade tried on them was
+# rejected on look, whatever the statistics said — matching the official art's
+# spread and chroma made the painted faces harsh rather than crisp. They are
+# graded by hand instead, so the head-shots in assets-src/racers/ are somebody's
+# deliberate work and this script must not overwrite it on the next run.
+#
+# `--kinds headshot` still forces it, for experimenting. The profile below is
+# kept for that, and because its reasoning is worth not re-deriving.
+DEFAULT_KINDS = ("portrait", "vehicle")
+
 # Per-kind, because the two kinds of art fail differently.
 #
 # A vehicle is a 400px render of a shiny object; it mostly needs its haze
@@ -328,11 +340,19 @@ def main():
     ap.add_argument("names", nargs="*", help="e.g. Arthur_vehicle (default: everything in racers-raw)")
     ap.add_argument("--apply", action="store_true", help="write the files, not just measure")
     ap.add_argument("--out", default=None, help=f"where to write (default: {SRC})")
+    ap.add_argument("--kinds", nargs="+", default=list(DEFAULT_KINDS),
+                    choices=list(PROFILE), help=f"default: {' '.join(DEFAULT_KINDS)}")
     args = ap.parse_args()
 
     if not RAW.exists():
         raise SystemExit(f"no raw captures at {RAW}")
     targets = args.names or sorted(p.stem for p in RAW.glob("*.png"))
+    kept, skipped = [], []
+    for stem in targets:
+        (kept if stem.rsplit("_", 1)[-1] in args.kinds else skipped).append(stem)
+    targets = kept
+    if skipped:
+        print(f"Skipping {len(skipped)} (kind not in --kinds): {', '.join(skipped)}")
 
     refs = {}
     for kind in ("portrait", "headshot", "vehicle"):
