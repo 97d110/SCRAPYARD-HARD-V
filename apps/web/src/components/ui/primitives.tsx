@@ -209,9 +209,13 @@ export function Avatar({
              */
             width: Math.round(size * vehicleScale),
             height: Math.round(size * vehicleScale),
-            // Hangs slightly off the rim so it reads as a badge ON the circle
-            // rather than something trapped inside it.
-            transform: 'translate(-14%, 14%)',
+            /*
+             * Hangs off the rim so it reads as a badge ON the circle rather
+             * than something trapped inside it. Equal X and Y so it travels
+             * along the diagonal, which is the only direction where pushing it
+             * out doesn't eat into the portrait's silhouette.
+             */
+            transform: 'translate(-28%, 28%)',
             /*
              * A light-grey rim, then a dark lift.
              *
