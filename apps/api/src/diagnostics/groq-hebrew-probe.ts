@@ -130,6 +130,25 @@ const CASES: ProbeCase[] = [
     speakerId: 'r-amit',
     note: 'סיימתי ("I finished") — speaker said first, placed last, no scores given.',
   },
+  {
+    /*
+     * The contracted teens, exactly as they're said out loud. An unrecognised
+     * number doesn't error — it comes back null, which reads as "no score
+     * given" and quietly loses a real result. So this is worth a case.
+     */
+    transcript: 'דנה ניצחה עם חמשרה, אחר כך עמית עם שתמשרה',
+    expected: ['r-dana', 'r-amit'],
+    expectedScores: [15, 12],
+    note: 'Contracted teens: חמשרה = 15, שתמשרה = 12.',
+  },
+  {
+    // Descending on purpose: a case whose expected output the grid would reject
+    // as an invalid race is a confusing thing to assert as correct.
+    transcript: 'יעל ניצחה עם שמונשרה, עומר עם ששרה, נועם עם ארבעשרה',
+    expected: ['r-yael', 'r-omer', 'r-noam'],
+    expectedScores: [18, 16, 14],
+    note: 'More contractions the rule should generalise to: שמונשרה/ששרה/ארבעשרה = 18/16/14.',
+  },
 ];
 
 interface Finisher {
