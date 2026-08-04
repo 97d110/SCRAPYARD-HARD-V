@@ -72,6 +72,12 @@ export interface UpdateRuleInput {
   order?: number;
 }
 
+/** Mirrors the `Racer` shape in apps/api/src/common/racers.ts. */
+export interface RacerOption {
+  name: string;
+  slug: string;
+}
+
 const BASE = '/api';
 
 export class ApiError extends Error {
@@ -144,7 +150,12 @@ export const api = {
 
   // --- users --------------------------------------------------------------
   users: () => request<PublicUser[]>('/users'),
-  profileOptions: () => request<{ racers: string[] }>('/users/options'),
+  /**
+   * Racers as `{ name, slug }`. The slug keys character art; it comes from the
+   * server rather than being derived here so two slugify implementations can't
+   * drift apart and silently stop resolving one racer's images.
+   */
+  profileOptions: () => request<{ racers: RacerOption[] }>('/users/options'),
   profile: (id: string) => request<ProfileBundle>(`/users/${encodeURIComponent(id)}`),
   updateProfile: (id: string, patch: Record<string, unknown>) =>
     request<PublicUser>(`/users/${encodeURIComponent(id)}`, {

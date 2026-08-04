@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Bell, Calendar, Crosshair, Flame, LogOut, Pencil, RotateCcw, Save, Skull, Swords, Upload, X } from 'lucide-react';
-import { api } from '../lib/api';
+import { api, type RacerOption } from '../lib/api';
 import {
   getPushSubscription,
   isPushSupported,
@@ -737,7 +737,7 @@ function ProfileEditor({
   /* Live preview: the panel, avatar ring and Save button all take the colour
    * being previewed, not the saved one, so the choice is visible before saving. */
   const previewAccent = RACE_COLOR_HEX[raceColor];
-  const [options, setOptions] = useState<{ racers: string[] } | null>(null);
+  const [options, setOptions] = useState<{ racers: RacerOption[] } | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -870,27 +870,32 @@ function ProfileEditor({
           <div>
             <Label className="mb-1.5">Your ride</Label>
             <div className="flex flex-wrap gap-1.5">
-              {(options?.racers ?? [favoriteRacer]).map((racer) => (
-                <button
-                  key={racer}
-                  onClick={() => setFavoriteRacer(racer)}
-                  className={`border px-2.5 py-1.5 font-mono text-[0.65rem] transition ${
-                    racer === favoriteRacer
-                      ? 'border-transparent text-white'
-                      : 'border-hairline text-[var(--text-dim)] hover:border-white/25 hover:text-white'
-                  }`}
-                  style={
-                    racer === favoriteRacer
-                      ? {
-                          background: `${previewAccent}26`,
-                          boxShadow: `inset 0 0 0 1px ${previewAccent}`,
-                        }
-                      : undefined
-                  }
-                >
-                  {racer}
-                </button>
-              ))}
+              {/* Until options load, show the racer they already have so the
+                  row is never empty. */}
+              {(options?.racers ?? [{ name: favoriteRacer, slug: '' }]).map((racer) => {
+                const active = racer.name === favoriteRacer;
+                return (
+                  <button
+                    key={racer.slug || racer.name}
+                    onClick={() => setFavoriteRacer(racer.name)}
+                    className={`border px-2.5 py-1.5 font-mono text-[0.65rem] transition ${
+                      active
+                        ? 'border-transparent text-white'
+                        : 'border-hairline text-[var(--text-dim)] hover:border-white/25 hover:text-white'
+                    }`}
+                    style={
+                      active
+                        ? {
+                            background: `${previewAccent}26`,
+                            boxShadow: `inset 0 0 0 1px ${previewAccent}`,
+                          }
+                        : undefined
+                    }
+                  >
+                    {racer.name}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
