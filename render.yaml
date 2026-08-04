@@ -95,6 +95,18 @@ services:
       - key: VAPID_SUBJECT
         value: mailto:amit@cytactic.com
 
+      # --- Voice entry (you supply, optional) -------------------------------
+      # Spoken-Hebrew race entry. Optional like the push keys: unset means the
+      # mic button hides itself. Free tier, no card, rate-limited rather than
+      # credit-limited: https://console.groq.com -> API Keys
+      - key: GROQ_API_KEY
+        sync: false
+      # Not sync: false — there's nothing secret about a model name, and pinning
+      # it here means the deployed model is reviewable in git rather than being
+      # a dashboard setting nobody remembers changing.
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b
+
       # --- Behaviour -------------------------------------------------------
       - key: SCRAPYARD_TIMEZONE
         value: Asia/Jerusalem

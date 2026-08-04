@@ -34,7 +34,8 @@
     "seed": "ts-node -P apps/api/tsconfig.json apps/api/src/database/seed.ts",
     "migrate:encrypt-users": "ts-node -P apps/api/tsconfig.json apps/api/src/database/migrate-encrypt-users.ts",
     "smoke": "ts-node -P apps/api/tsconfig.json apps/api/src/database/smoke.ts",
-    "preflight": "ts-node -P apps/api/tsconfig.json apps/api/src/diagnostics/preflight.ts"
+    "preflight": "ts-node -P apps/api/tsconfig.json apps/api/src/diagnostics/preflight.ts",
+    "probe:groq": "ts-node -P apps/api/tsconfig.json apps/api/src/diagnostics/groq-hebrew-probe.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.6",

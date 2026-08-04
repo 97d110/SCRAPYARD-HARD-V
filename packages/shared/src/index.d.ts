@@ -119,6 +119,38 @@ export interface KillEventInput {
   victimId: string;
 }
 
+// ─── Voice entry ─────────────────────────────────────────────────────────────
+
+/** One racer the extractor placed, in finishing order within `VoiceDraft`. */
+export interface VoiceDraftRow {
+  racerId: string;
+  /**
+   * The name as it was actually spoken, kept so a wrong match is visible.
+   * With no separate review step, the grid itself is where someone catches
+   * "heard יוסי, filled in Dana" — which needs both halves on screen.
+   */
+  heardAs: string;
+  /** null when no score was said for this racer. Never inferred from placement. */
+  gameScore: number | null;
+}
+
+/**
+ * A draft, emphatically not a submission: every field lands in the form as an
+ * ordinary editable value and nothing is recorded until the usual Add Score
+ * flow is completed by hand.
+ */
+export interface VoiceDraft {
+  /** What the browser heard, echoed back so it's obvious when speech was the problem. */
+  transcript: string;
+  /** Winner first. Array order is the finishing order. */
+  finishers: VoiceDraftRow[];
+  /**
+   * Names heard but matched to nobody. Surfaced rather than swallowed: it's
+   * the difference between "who is Yossi?" and a silently short list.
+   */
+  unmatched: string[];
+}
+
 /**
  * One directed kill inside a race: `killerId` took out `victimId`. `revenge`
  * is decided server-side against a same-day grudge ledger — it's true when the

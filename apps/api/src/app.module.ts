@@ -11,6 +11,7 @@ import { WebModule } from './web/web.module';
 import { LiveModule } from './live/live.module';
 import { LiveGateway } from './live/live.gateway';
 import { PushModule } from './push/push.module';
+import { VoiceModule } from './voice/voice.module';
 import { dayKey, monthKey, timezoneName } from './common/period.util';
 
 @Controller()
@@ -76,6 +77,7 @@ class MetaController {
     WebModule,
     LiveModule,
     PushModule,
+    VoiceModule,
   ],
   controllers: [MetaController],
 })
