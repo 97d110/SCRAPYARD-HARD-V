@@ -212,7 +212,20 @@ export function Avatar({
             // Hangs slightly off the rim so it reads as a badge ON the circle
             // rather than something trapped inside it.
             transform: 'translate(-14%, 14%)',
-            filter: 'drop-shadow(0 1px 5px rgb(0 0 0 / 0.85))',
+            /*
+             * A light-grey rim, then a dark lift.
+             *
+             * `drop-shadow` follows the alpha edge rather than the box, so on a
+             * cut-out it traces the car's actual silhouette — which is what
+             * separates it from the character art directly behind. Grey rather
+             * than white so the rim reads as an outline instead of a glow; the
+             * cars themselves have white highlights that pure #fff bled into.
+             *
+             * Applied twice because each shadow operates on the previous one's
+             * result, and one pass is too thin to read against busy artwork.
+             */
+            filter:
+              'drop-shadow(0 0 1.5px #b9c0d0) drop-shadow(0 0 1.5px #b9c0d0) drop-shadow(0 2px 4px rgb(0 0 0 / 0.7))',
           }}
         />
       )}
