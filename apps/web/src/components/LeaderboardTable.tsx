@@ -4,6 +4,7 @@ import { ArrowDown, ArrowUp, ArrowUpDown, Crown, Trophy } from 'lucide-react';
 import { Avatar, Label, Panel } from './ui/primitives';
 import type { LeaderboardEntry, MetricColumn, Scoreboard } from '@scrapyard/shared';
 import { RACE_COLOR_HEX } from '../lib/raceColors';
+import { RacerStats, statsFromEntry } from './RacerStats';
 
 /**
  * The leaderboard. Podium cards for the top three by in-game score, then a
@@ -203,8 +204,11 @@ export function LeaderboardTable({
                   size={22}
                   accent={RACE_COLOR_HEX[entry.raceColor]}
                 />
-                <span className="max-w-[10rem] truncate text-xs text-[var(--text-dim)]">
-                  {entry.displayName}
+                <span className="flex min-w-0 flex-col">
+                  <span className="max-w-[10rem] truncate text-xs text-[var(--text-dim)]">
+                    {entry.displayName}
+                  </span>
+                  <RacerStats stats={statsFromEntry(entry)} />
                 </span>
               </Link>
             ))}
@@ -416,6 +420,8 @@ function PodiumCard({
             <p className="truncate font-mono text-[0.65rem] text-[var(--text-faint)]">
               {entry.favoriteRacer}
             </p>
+            {/* Why this racer sits here rather than one row down. */}
+            <RacerStats stats={statsFromEntry(entry)} className="mt-1" size="sm" />
           </div>
         </div>
 

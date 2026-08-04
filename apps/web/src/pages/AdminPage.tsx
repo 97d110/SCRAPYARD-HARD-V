@@ -55,6 +55,7 @@ import {
   Segmented,
 } from '../components/ui/primitives';
 import { RACE_COLOR_HEX, RACE_COLORS } from '../lib/raceColors';
+import { RacerStats, statsFromUser } from '../components/RacerStats';
 import type {
   AchievementRule,
   AchievementScope,
@@ -1008,6 +1009,7 @@ function CrewRow({
               </span>
             )}
           </span>
+          <RacerStats stats={statsFromUser(user)} className="mt-0.5" />
           <span className="block truncate text-[0.68rem] text-[var(--text-faint)]">
             {user.email}
             {user.hebrewAliases.length > 0 && (

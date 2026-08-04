@@ -4,6 +4,7 @@ import { ArrowUpDown, Search } from 'lucide-react';
 import { useApp } from '../state/AppStore';
 import { Avatar, Label, Panel, Segmented } from '../components/ui/primitives';
 import { RACE_COLOR_HEX } from '../lib/raceColors';
+import { RacerStats, statsFromUser } from '../components/RacerStats';
 
 type SortKey = 'wins' | 'name' | 'newest';
 
@@ -122,6 +123,7 @@ export function UsersPage() {
                     <span className="block truncate font-mono text-[0.62rem] text-[var(--text-faint)]">
                       {user.favoriteRacer} · {user.email}
                     </span>
+                    <RacerStats stats={statsFromUser(user)} className="mt-0.5" />
                   </span>
                 </span>
 
@@ -182,6 +184,7 @@ export function UsersPage() {
                     <span className="block truncate font-mono text-[0.6rem] text-[var(--text-faint)]">
                       {user.favoriteRacer}
                     </span>
+                    <RacerStats stats={statsFromUser(user)} className="mt-0.5" />
                   </span>
                   <span
                     className="stat-number shrink-0 text-xl"

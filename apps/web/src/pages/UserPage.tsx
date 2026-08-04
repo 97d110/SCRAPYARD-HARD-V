@@ -13,6 +13,7 @@ import { useLiveEvent } from '../state/useLiveEvent';
 import { AchievementGrid } from '../components/AchievementGrid';
 import { ArthurLottie } from '../components/arthur/ArthurLottie';
 import { RacerBadge } from '../components/RacerBadge';
+import { RacerStats, statsFromUser } from '../components/RacerStats';
 import {
   Avatar,
   ErrorPlate,
@@ -133,6 +134,8 @@ export function UserPage() {
                 “{user.tagline}”
               </p>
             )}
+
+            <RacerStats stats={statsFromUser(user)} className="mt-3" size="sm" />
 
             <div className="mt-4 flex flex-wrap gap-2">
               <RankChip label="All time" rank={ranks.allTime} accent="#FFB020" />

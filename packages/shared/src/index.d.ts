@@ -272,6 +272,15 @@ export interface UserScores {
   daily: Record<string, number>;
   /** Total races entered (any place), all-time. */
   races: number;
+  /**
+   * Total in-game score across every race, all-time.
+   *
+   * Present so the `w / r / s` summary beside a racer's name can render
+   * anywhere, not just on a leaderboard row — those three numbers are exactly
+   * the board's tiebreak chain (most wins, then fewest races, then highest
+   * score), so showing them is what makes a racer's position explicable.
+   */
+  gameScore: number;
   /** ISO timestamp of this racer's most recent race, or null if they've never raced. */
   lastRaceAt: string | null;
 }

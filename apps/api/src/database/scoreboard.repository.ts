@@ -185,7 +185,17 @@ export class ScoreboardRepository {
    * Backs `GET /users` and the profile ranks.
    */
   async scoresByUser(): Promise<
-    Map<string, { allTime: number; month: number; day: number; races: number; lastAt: string | null }>
+    Map<
+      string,
+      {
+        allTime: number;
+        month: number;
+        day: number;
+        races: number;
+        gameScore: number;
+        lastAt: string | null;
+      }
+    >
   > {
     const games = await this.mongo.games();
     const month = monthKey();
@@ -198,6 +208,7 @@ export class ScoreboardRepository {
         month: number;
         day: number;
         races: number;
+        gameScore: number;
         lastAt: Date | null;
       }>([
         { $unwind: '$results' },
@@ -224,6 +235,9 @@ export class ScoreboardRepository {
               },
             },
             races: { $sum: 1 },
+            // All-time only, like `races` beside it: this feeds the w/r/s trio
+            // shown next to a racer's name, which is an all-time summary.
+            gameScore: { $sum: '$results.gameScore' },
             lastAt: { $max: '$at' },
           },
         },
@@ -238,6 +252,7 @@ export class ScoreboardRepository {
           month: r.month,
           day: r.day,
           races: r.races,
+          gameScore: r.gameScore,
           lastAt: r.lastAt ? new Date(r.lastAt).toISOString() : null,
         },
       ]),

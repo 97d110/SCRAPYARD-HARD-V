@@ -20,6 +20,7 @@ import { api } from '../lib/api';
 import { recordAudio, speechSupported, type RecordingSession } from '../lib/speech';
 import type { GameResultInput, KillEventInput, MetricDef, PublicUser } from '@scrapyard/shared';
 import { RACE_COLOR_HEX } from '../lib/raceColors';
+import { RacerStats, statsFromUser } from './RacerStats';
 
 /**
  * The race-entry overlay.
@@ -668,8 +669,11 @@ export function AddScoreOverlay({
                       {user.displayName}
                     </span>
                     <span className="block truncate font-mono text-[0.6rem] text-[var(--text-faint)]">
-                      {user.scores.allTime} all-time · {user.favoriteRacer}
+                      {user.favoriteRacer}
                     </span>
+                    {/* This list is sorted by recency, but these are the numbers
+                        that decide the board — worth seeing while picking. */}
+                    <RacerStats stats={statsFromUser(user)} className="mt-0.5" />
                   </span>
                   {selected && (
                     <span
