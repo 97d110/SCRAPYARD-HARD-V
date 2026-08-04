@@ -18,6 +18,7 @@ import type {
   PushSubscriptionInput,
   RecordGameResponse,
   Scoreboard,
+  VoiceDraft,
 } from '@scrapyard/shared';
 import { CLIENT_ID, CLIENT_ID_HEADER } from './client-id';
 
@@ -170,6 +171,22 @@ export const api = {
   // --- metrics ------------------------------------------------------------
   /** Enabled metric registry — the race-entry form reads the captured ones. */
   metrics: () => request<MetricDef[]>('/metrics'),
+
+  // --- voice entry ----------------------------------------------------------
+  voice: {
+    /** False when GROQ_API_KEY isn't set — the overlay hides the mic entirely. */
+    status: () => request<{ available: boolean }>('/voice/status'),
+    /**
+     * Hebrew transcript in, draft form fields out. Records nothing: the caller
+     * drops the result into the grid, where it's edited and submitted by hand
+     * through the normal path.
+     */
+    draft: (transcript: string) =>
+      request<VoiceDraft>('/voice/draft', {
+        method: 'POST',
+        body: JSON.stringify({ transcript }),
+      }),
+  },
 
   // --- content ------------------------------------------------------------
   puns: () => request<Pun[]>('/content/puns'),

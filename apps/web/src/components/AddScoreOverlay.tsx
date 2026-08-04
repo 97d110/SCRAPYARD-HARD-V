@@ -6,14 +6,18 @@ import {
   ChevronUp,
   Crown,
   GripVertical,
+  Loader2,
+  Mic,
   Plus,
   Search,
   Skull,
+  Square,
   Trophy,
   X,
 } from 'lucide-react';
 import { Avatar, Label, NeonButton, Panel, withGlow } from './ui/primitives';
 import { api } from '../lib/api';
+import { listenForHebrew, speechSupported, type SpeechSession } from '../lib/speech';
 import type { GameResultInput, KillEventInput, MetricDef, PublicUser } from '@scrapyard/shared';
 
 /**
@@ -126,6 +130,24 @@ export function AddScoreOverlay({
   const gridRef = useRef<HTMLDivElement>(null);
   const dragPointerId = useRef<number | null>(null);
 
+  /*
+   * Voice entry. `voiceReady` is null until the server has been asked whether
+   * the feature is configured at all — the mic renders only on a definite yes,
+   * so an unconfigured deployment never shows a button that can't work.
+   *
+   * `heardBy` keeps what was spoken for each racer the extractor placed. With
+   * no separate review step by design, that mapping is the only way someone
+   * spots "heard יוסי, filled in Dana", so it rides along on the grid rows.
+   */
+  const [voiceReady, setVoiceReady] = useState<boolean | null>(null);
+  const [listening, setListening] = useState(false);
+  const [interim, setInterim] = useState('');
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [voiceNote, setVoiceNote] = useState<string | null>(null);
+  const [heardBy, setHeardBy] = useState<Record<string, string>>({});
+  const sessionRef = useRef<SpeechSession | null>(null);
+
   /**
    * Close with the collapse animation: mark closing, then unmount (via the
    * parent's onClose) once it has played. A launch is already running its own
@@ -151,8 +173,47 @@ export function AddScoreOverlay({
     setStep('racers');
     setDragIndex(null);
     setClosing(false);
+    setListening(false);
+    setInterim('');
+    setVoiceBusy(false);
+    setVoiceError(null);
+    setVoiceNote(null);
+    setHeardBy({});
     const timer = window.setTimeout(() => searchRef.current?.focus(), 220);
     return () => window.clearTimeout(timer);
+  }, [open]);
+
+  /*
+   * Is voice entry usable at all? Two independent gates: the browser has to
+   * implement speech recognition, and the server has to have a key configured.
+   * Asked once per open, and a failed check reads as "off" rather than throwing
+   * — the overlay's job is recording races, not reporting on optional extras.
+   */
+  useEffect(() => {
+    if (!open) return;
+    if (!speechSupported()) {
+      setVoiceReady(false);
+      return;
+    }
+    let live = true;
+    api.voice
+      .status()
+      .then((result) => {
+        if (live) setVoiceReady(result.available);
+      })
+      .catch(() => {
+        if (live) setVoiceReady(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [open]);
+
+  // Never leave the microphone live past the overlay closing.
+  useEffect(() => {
+    if (open) return;
+    sessionRef.current?.cancel();
+    sessionRef.current = null;
   }, [open]);
 
   // A kill can only involve racers still on the grid — drop any whose killer or
@@ -160,6 +221,12 @@ export function AddScoreOverlay({
   useEffect(() => {
     const ids = new Set(finishers.map((f) => f.racerId));
     setKills((prev) => prev.filter((k) => ids.has(k.killerId) && ids.has(k.victimId)));
+    // Same for the "heard as" labels: swapping a mis-matched racer out should
+    // take the stale transcript note with them, not leave it on the new row.
+    setHeardBy((prev) => {
+      const next = Object.fromEntries(Object.entries(prev).filter(([id]) => ids.has(id)));
+      return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+    });
   }, [finishers]);
 
   // The captured-metric list only changes when an admin edits it, so a fetch
@@ -197,6 +264,76 @@ export function AddScoreOverlay({
       document.body.style.overflow = '';
     };
   }, [open, requestClose]);
+
+  /**
+   * Listen, extract, fill. Replaces the grid outright rather than merging into
+   * it: someone describing a whole race means "this is the race", and merging
+   * would silently blend a correction into the mistake it was correcting.
+   *
+   * Everything it produces is an ordinary editable value — the placement order,
+   * the scores, the racers themselves — and nothing is recorded until Add Score
+   * is pressed by hand as usual.
+   */
+  const runVoiceEntry = async () => {
+    if (phase !== 'idle' || listening || voiceBusy) return;
+    setVoiceError(null);
+    setVoiceNote(null);
+    setInterim('');
+    setListening(true);
+
+    let transcript: string;
+    try {
+      const { session, result } = listenForHebrew({ onInterim: setInterim });
+      sessionRef.current = session;
+      transcript = await result;
+    } catch (caught) {
+      setListening(false);
+      setInterim('');
+      sessionRef.current = null;
+      // "Cancelled." is the person's own doing — not worth an error message.
+      const message = caught instanceof Error ? caught.message : 'Could not listen.';
+      if (message !== 'Cancelled.') setVoiceError(message);
+      return;
+    }
+
+    setListening(false);
+    sessionRef.current = null;
+    setVoiceBusy(true);
+    try {
+      const draft = await api.voice.draft(transcript);
+
+      if (draft.finishers.length === 0) {
+        setVoiceError(
+          draft.unmatched.length > 0
+            ? `Heard ${draft.unmatched.join(', ')} — nobody on the roster matches. Add their Hebrew name in their profile.`
+            : "Couldn't pick out any racers from that. Try naming them one by one.",
+        );
+        return;
+      }
+
+      setFinishers(
+        draft.finishers.map((row) => ({
+          racerId: row.racerId,
+          gameScore: row.gameScore === null ? '' : String(row.gameScore),
+          stats: {},
+        })),
+      );
+      setHeardBy(Object.fromEntries(draft.finishers.map((row) => [row.racerId, row.heardAs])));
+
+      // Partial success is still success, but it must be visible: a racer who
+      // was said and silently dropped is the one mistake nobody would catch.
+      if (draft.unmatched.length > 0) {
+        setVoiceNote(
+          `Couldn't place ${draft.unmatched.join(', ')} — add them below, or set their Hebrew name in their profile.`,
+        );
+      }
+    } catch (caught) {
+      setVoiceError(caught instanceof Error ? caught.message : 'Could not read that.');
+    } finally {
+      setVoiceBusy(false);
+      setInterim('');
+    }
+  };
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -414,7 +551,7 @@ export function AddScoreOverlay({
 
   const racerPickerFields = (
     <>
-      {/* Search. */}
+      {/* Search + voice entry. */}
       <div className="shrink-0 space-y-2">
         <div className="relative">
           <Search
@@ -434,6 +571,48 @@ export function AddScoreOverlay({
             disabled={phase !== 'idle'}
           />
         </div>
+
+        {/*
+          Rendered only on a definite yes from both gates — an unsupported
+          browser or an unconfigured server shows nothing here at all rather
+          than a button that would fail when pressed.
+        */}
+        {voiceReady === true && (
+          <>
+            <button
+              type="button"
+              className={`btn btn-ghost w-full !py-2 !text-[0.65rem] ${listening ? '!border-plasma/70 !text-plasma' : ''}`}
+              disabled={phase !== 'idle' || voiceBusy}
+              onClick={() => (listening ? sessionRef.current?.stop() : void runVoiceEntry())}
+            >
+              {voiceBusy ? (
+                <>
+                  <Loader2 size={13} className="animate-spin" />
+                  Reading it…
+                </>
+              ) : listening ? (
+                <>
+                  <Square size={11} className="animate-pulse" />
+                  Listening — tap when done
+                </>
+              ) : (
+                <>
+                  <Mic size={13} />
+                  Say the results in Hebrew
+                </>
+              )}
+            </button>
+
+            {/* Live transcript: proof it's hearing something, and whose fault it is when it isn't. */}
+            {listening && interim && (
+              <p dir="rtl" className="truncate text-right text-[0.7rem] text-[var(--text-dim)]">
+                {interim}
+              </p>
+            )}
+            {voiceError && <p className="text-[0.65rem] text-danger">{voiceError}</p>}
+            {voiceNote && <p className="text-[0.65rem] text-[#FFB020]">{voiceNote}</p>}
+          </>
+        )}
       </div>
 
       {/* Roster. */}
@@ -606,9 +785,26 @@ export function AddScoreOverlay({
                     <span className="block truncate font-display text-[0.75rem] font-bold uppercase tracking-wide text-white">
                       {user.displayName}
                     </span>
-                    <span className="block truncate font-mono text-[0.6rem] text-[var(--text-faint)]">
-                      {user.favoriteRacer}
-                    </span>
+                    {/*
+                      What was actually said, when voice put this row here. This
+                      is the whole safeguard for a wrong-but-valid match: seeing
+                      "heard יוסי" above Dana Kessler is how anyone notices. It
+                      replaces the ride name rather than crowding in beside it,
+                      since it matters more while it's there.
+                    */}
+                    {heardBy[finisher.racerId] ? (
+                      <span
+                        dir="rtl"
+                        className="block truncate text-right font-mono text-[0.6rem] text-plasma"
+                        title="Heard this, matched to this racer — change it if that's wrong"
+                      >
+                        ⟵ {heardBy[finisher.racerId]}
+                      </span>
+                    ) : (
+                      <span className="block truncate font-mono text-[0.6rem] text-[var(--text-faint)]">
+                        {user.favoriteRacer}
+                      </span>
+                    )}
                   </span>
 
                   {/* Score. */}

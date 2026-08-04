@@ -22,7 +22,27 @@ import {
   Panel,
   Stat,
 } from '../components/ui/primitives';
-import type { GameParticipation, ProfileBundle, PublicUser, Rival } from '@scrapyard/shared';
+import type {
+  GameParticipation,
+  ProfileBundle,
+  PublicUser,
+  RaceColor,
+  Rival,
+} from '@scrapyard/shared';
+
+/**
+ * The four in-game car colours, with the hexes the game actually renders.
+ * Written out literally rather than interpolated so Tailwind's scanner isn't
+ * involved at all — these are inline styles, but the lesson from the
+ * `.btn-primary` purge is worth keeping in mind near any generated class name.
+ */
+const RACE_COLORS: RaceColor[] = ['blue', 'red', 'green', 'yellow'];
+const RACE_COLOR_HEX: Record<RaceColor, string> = {
+  blue: '#2F6FED',
+  red: '#FF3B30',
+  green: '#2ECC71',
+  yellow: '#FFD60A',
+};
 
 /**
  * Racer profile. Public for everyone (achievements included); the edit panel
@@ -717,6 +737,14 @@ function ProfileEditor({
   const [avatarUrl, setAvatarUrl] = useState(user.avatarUrl);
   const [favoriteRacer, setFavoriteRacer] = useState(user.favoriteRacer);
   const [accentColor, setAccentColor] = useState(user.accentColor);
+  const [raceColor, setRaceColor] = useState<RaceColor | null>(user.raceColor);
+  /*
+   * Held as one comma-separated string rather than an array of inputs. Typing
+   * "עמית, נינו" in a single box is how people naturally write a list of names,
+   * and the server does the splitting, trimming and de-duplicating anyway — so
+   * a tag-chip editor would be more machinery for the same result.
+   */
+  const [hebrewAliases, setHebrewAliases] = useState(user.hebrewAliases.join(', '));
   const [options, setOptions] = useState<{ racers: string[]; accents: string[] } | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -751,6 +779,11 @@ function ProfileEditor({
         avatarUrl,
         favoriteRacer,
         accentColor,
+        raceColor,
+        hebrewAliases: hebrewAliases
+          .split(',')
+          .map((alias) => alias.trim())
+          .filter(Boolean),
       });
       onSaved(next);
     } catch (caught) {
@@ -868,6 +901,54 @@ function ProfileEditor({
                 </button>
               ))}
             </div>
+          </div>
+
+          <div>
+            <Label className="mb-1.5">Your car colour</Label>
+            <div className="flex flex-wrap items-center gap-2">
+              {RACE_COLORS.map((color) => {
+                const active = raceColor === color;
+                return (
+                  <button
+                    key={color}
+                    type="button"
+                    // Tapping the active one clears it — "no usual colour" is a
+                    // real answer, and it's the default for everyone at first.
+                    onClick={() => setRaceColor(active ? null : color)}
+                    aria-label={color}
+                    aria-pressed={active}
+                    title={active ? `${color} — tap to clear` : color}
+                    className="h-9 w-9 rounded-full transition-transform hover:scale-110"
+                    style={{
+                      background: RACE_COLOR_HEX[color],
+                      boxShadow: active
+                        ? `0 0 0 2px #fff, 0 0 22px ${RACE_COLOR_HEX[color]}`
+                        : `0 0 12px ${RACE_COLOR_HEX[color]}88`,
+                      opacity: active ? 1 : 0.45,
+                    }}
+                  />
+                );
+              })}
+              <span className="font-mono text-[0.6rem] text-[var(--text-faint)]">
+                {raceColor ? 'tap again to clear' : 'optional'}
+              </span>
+            </div>
+          </div>
+
+          <div>
+            <Label className="mb-1.5">Your name in Hebrew</Label>
+            <input
+              className="field"
+              dir="rtl"
+              placeholder="עמית, נינו, עמית נינו"
+              value={hebrewAliases}
+              onChange={(event) => setHebrewAliases(event.target.value)}
+            />
+            <p className="mt-1.5 text-[0.65rem] leading-relaxed text-[var(--text-faint)]">
+              Comma-separated — first name, surname, nicknames, however the crew actually says it.
+              Used when someone records a race by speaking it out loud: spoken Hebrew can&rsquo;t be
+              matched against a Latin name automatically, so without this you won&rsquo;t be picked up.
+            </p>
           </div>
 
           <div>
