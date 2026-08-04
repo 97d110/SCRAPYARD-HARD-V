@@ -705,9 +705,17 @@ export function AddScoreOverlay({
               Only ever idle or recording here: once there's progress to report
               the flow above replaces this entirely.
             */}
+            {/*
+              `whitespace-nowrap` plus reduced tracking keeps every label on one
+              line. `.btn-primary`'s 0.2em letter-spacing is generous for a
+              two-word CTA and simply too wide for a sentence, so it's dialled
+              back here rather than the labels being cut to fit.
+            */}
             <button
               type="button"
-              className={`btn btn-primary w-full !py-3 !text-[0.7rem] ${listening ? 'rec-live' : ''}`}
+              className={`btn btn-primary w-full whitespace-nowrap !py-3 !text-[0.7rem] !tracking-[0.1em] ${
+                listening ? 'rec-live' : ''
+              }`}
               // Never disabled while listening — that click is the stop button.
               disabled={phase !== 'idle'}
               onClick={() => (listening ? sessionRef.current?.stop() : void runVoiceEntry())}
@@ -720,12 +728,12 @@ export function AddScoreOverlay({
                     className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#FF3B30]"
                     style={{ boxShadow: '0 0 10px #FF3B30' }}
                   />
-                  Recording — tap to finish
+                  Recording · tap to stop
                 </>
               ) : (
                 <>
                   <Mic size={14} />
-                  Say the results in Hebrew
+                  Say it in Hebrew
                 </>
               )}
             </button>
@@ -1341,9 +1349,18 @@ function SubmitButton({
       } ${className}`}
       style={{
         ...withGlow(accent),
-        background: armed
+        /*
+         * Longhands only, never the `background` shorthand — and this is a real
+         * bug rather than a lint nicety. The shorthand resets background-size to
+         * `auto`, so each time `armed` flipped React rewrote `background` and
+         * wiped the 220% width that `submit-drift` slides across, leaving the
+         * animation running with nothing to move. React's warning about mixing
+         * the two is pointing at exactly that.
+         */
+        backgroundImage: armed
           ? `linear-gradient(115deg, ${accent}, #FF2D95 55%, ${accent} 110%)`
-          : 'rgb(255 255 255 / 0.03)',
+          : 'none',
+        backgroundColor: armed ? 'transparent' : 'rgb(255 255 255 / 0.03)',
         backgroundSize: '220% 100%',
         border: armed ? 'none' : '1px solid var(--hairline)',
         boxShadow: armed
