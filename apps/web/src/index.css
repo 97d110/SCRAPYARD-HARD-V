@@ -221,16 +221,6 @@
     pointer-events: none;
   }
 
-  .rec-thinking::after {
-    content: '';
-    position: absolute;
-    inset: auto 0 0 0;
-    height: 2px;
-    background: linear-gradient(90deg, transparent, var(--plasma), transparent);
-    animation: rec-progress 1.15s ease-in-out infinite;
-    pointer-events: none;
-  }
-
   /* --- Type ------------------------------------------------------------- */
 
   .neon {
@@ -419,15 +409,6 @@
   to   { background-position: -140% 0; }
 }
 
-/*
- * Processing: an indeterminate bar. Deliberately indeterminate — transcription
- * plus extraction is two model calls of unknown length, so a percentage would
- * be a lie and a spinner alone doesn't say "still going".
- */
-@keyframes rec-progress {
-  from { transform: translateX(-100%); }
-  to   { transform: translateX(100%); }
-}
 
 @keyframes grid-drift {
   from { background-position: 0 0; }

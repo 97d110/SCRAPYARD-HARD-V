@@ -96,6 +96,76 @@ function useIsDesktop(): boolean {
 type Step = 'racers' | 'grid' | 'extra';
 const STEPS: Step[] = ['racers', 'grid', 'extra'];
 
+/**
+ * What to call the bit where a model thinks about it.
+ *
+ * Invented gerunds on purpose: the honest label would be "waiting on two model
+ * calls of unknown length", which is neither short nor fun to read. One is
+ * picked at random per run, so the wait feels like the app doing something
+ * rather than the app having stalled.
+ */
+const VOICE_WORDS = [
+  'Transfigurelating',
+  'Untangling the shouting',
+  'Deciphering the yelling',
+  'Unscrambling names',
+  'Divining placements',
+  'Parsing the pandemonium',
+  'Wrangling syllables',
+  'Consulting the scrapyard',
+  'Translating enthusiasm',
+  'Sifting the commotion',
+  'Interrogating the audio',
+  'Reticulating racers',
+] as const;
+
+/**
+ * One line of the voice-entry progress flow.
+ *
+ * Three visual states, and the icon carries the meaning rather than colour
+ * alone: a tick for finished, a spinner for in flight, a hollow ring for
+ * not-yet. The connecting stub between rows is what makes three separate lines
+ * read as one sequence instead of a list.
+ */
+function FlowStep({
+  state,
+  label,
+  last = false,
+}: {
+  state: 'done' | 'active' | 'pending';
+  label: string;
+  last?: boolean;
+}) {
+  return (
+    <div className="flex items-start gap-2.5">
+      <span className="flex flex-col items-center">
+        <span className="grid h-4 w-4 shrink-0 place-items-center">
+          {state === 'done' ? (
+            <Check size={13} className="text-toxic" strokeWidth={3} />
+          ) : state === 'active' ? (
+            <Loader2 size={13} className="animate-spin text-plasma" />
+          ) : (
+            <span className="h-2 w-2 rounded-full border border-[var(--text-faint)]" />
+          )}
+        </span>
+        {!last && (
+          <span
+            className={`my-0.5 w-px flex-1 ${state === 'done' ? 'bg-toxic/40' : 'bg-hairline'}`}
+            style={{ minHeight: '0.5rem' }}
+          />
+        )}
+      </span>
+      <span
+        className={`font-mono text-[0.68rem] leading-4 ${
+          state === 'pending' ? 'text-[var(--text-faint)]' : 'text-[var(--text-dim)]'
+        } ${!last ? 'pb-1.5' : ''}`}
+      >
+        {label}
+      </span>
+    </div>
+  );
+}
+
 export function AddScoreOverlay({
   open,
   users,
@@ -141,12 +211,23 @@ export function AddScoreOverlay({
    * spots "heard יוסי, filled in Dana", so it rides along on the grid rows.
    */
   const [voiceReady, setVoiceReady] = useState<boolean | null>(null);
-  const [listening, setListening] = useState(false);
-  const [voiceBusy, setVoiceBusy] = useState(false);
+  /*
+   * One state machine rather than a booleans-per-stage set, because the stages
+   * are mutually exclusive by nature and separate flags would let impossible
+   * combinations exist (recording AND working) that the UI would then have to
+   * decide between.
+   */
+  const [voicePhase, setVoicePhase] = useState<'idle' | 'recording' | 'working' | 'done'>('idle');
+  /** Picked once per run so it doesn't reshuffle mid-spin. */
+  const [workingWord, setWorkingWord] = useState<string>(VOICE_WORDS[0]);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [voiceNote, setVoiceNote] = useState<string | null>(null);
   const [heardBy, setHeardBy] = useState<Record<string, string>>({});
   const sessionRef = useRef<RecordingSession | null>(null);
+  const doneTimer = useRef<number | null>(null);
+
+  const listening = voicePhase === 'recording';
+  const voiceBusy = voicePhase === 'working';
 
   /**
    * Close with the collapse animation: mark closing, then unmount (via the
@@ -173,8 +254,8 @@ export function AddScoreOverlay({
     setStep('racers');
     setDragIndex(null);
     setClosing(false);
-    setListening(false);
-    setVoiceBusy(false);
+    setVoicePhase('idle');
+    if (doneTimer.current !== null) window.clearTimeout(doneTimer.current);
     setVoiceError(null);
     setVoiceNote(null);
     setHeardBy({});
@@ -213,6 +294,7 @@ export function AddScoreOverlay({
     if (open) return;
     sessionRef.current?.cancel();
     sessionRef.current = null;
+    if (doneTimer.current !== null) window.clearTimeout(doneTimer.current);
   }, [open]);
 
   // A kill can only involve racers still on the grid — drop any whose killer or
@@ -274,10 +356,11 @@ export function AddScoreOverlay({
    * is pressed by hand as usual.
    */
   const runVoiceEntry = async () => {
-    if (phase !== 'idle' || listening || voiceBusy) return;
+    if (phase !== 'idle' || voicePhase !== 'idle') return;
+    if (doneTimer.current !== null) window.clearTimeout(doneTimer.current);
     setVoiceError(null);
     setVoiceNote(null);
-    setListening(true);
+    setVoicePhase('recording');
 
     let audio: string;
     try {
@@ -285,7 +368,7 @@ export function AddScoreOverlay({
       sessionRef.current = session;
       audio = await result;
     } catch (caught) {
-      setListening(false);
+      setVoicePhase('idle');
       sessionRef.current = null;
       // "Cancelled." is the person's own doing — not worth an error message.
       const message = caught instanceof Error ? caught.message : 'Could not record.';
@@ -293,9 +376,9 @@ export function AddScoreOverlay({
       return;
     }
 
-    setListening(false);
     sessionRef.current = null;
-    setVoiceBusy(true);
+    setWorkingWord(VOICE_WORDS[Math.floor(Math.random() * VOICE_WORDS.length)]);
+    setVoicePhase('working');
     try {
       const draft = await api.voice.draft(audio);
 
@@ -305,6 +388,7 @@ export function AddScoreOverlay({
             ? `Heard ${draft.unmatched.join(', ')} — nobody on the roster matches. Add their Hebrew name in their profile.`
             : "Couldn't pick out any racers from that. Try naming them one by one.",
         );
+        setVoicePhase('idle');
         return;
       }
 
@@ -324,10 +408,13 @@ export function AddScoreOverlay({
           `Couldn't place ${draft.unmatched.join(', ')} — add them below, or set their Hebrew name in their profile.`,
         );
       }
+      setVoicePhase('done');
+      // Long enough to register as finished, short enough not to sit in the way
+      // of the grid it just filled.
+      doneTimer.current = window.setTimeout(() => setVoicePhase('idle'), 1800);
     } catch (caught) {
       setVoiceError(caught instanceof Error ? caught.message : 'Could not read that.');
-    } finally {
-      setVoiceBusy(false);
+      setVoicePhase('idle');
     }
   };
 
@@ -585,7 +672,24 @@ export function AddScoreOverlay({
           browser or an unconfigured server shows nothing here at all rather
           than a button that would fail when pressed.
         */}
-        {voiceReady === true && (
+        {voiceReady === true && (voiceBusy || voicePhase === 'done') ? (
+          /*
+           * The button steps aside for the flow once there's something to
+           * report. Three rows, but only the middle one is a real wait —
+           * transcription and extraction happen inside a single request, so
+           * there's no honest signal between them. "Grid ready" is therefore a
+           * completion marker, not a phase pretending to take time: it ticks
+           * when the response lands, alongside the row above it.
+           */
+          <div className="border border-hairline bg-white/[0.02] px-3.5 py-3">
+            <FlowStep state="done" label="Recorded" />
+            <FlowStep
+              state={voiceBusy ? 'active' : 'done'}
+              label={voiceBusy ? `${workingWord}…` : workingWord}
+            />
+            <FlowStep state={voiceBusy ? 'pending' : 'done'} label="Grid ready" last />
+          </div>
+        ) : voiceReady === true ? (
           <>
             {/*
               A raw <button> rather than NeonButton, because both live states
@@ -597,23 +701,18 @@ export function AddScoreOverlay({
               Padding is trimmed off `.btn-primary`'s full CTA size — this wants
               to be unmistakable, but "Add Score" is still the button that ends
               the flow, and two identically-sized primaries would argue.
+
+              Only ever idle or recording here: once there's progress to report
+              the flow above replaces this entirely.
             */}
             <button
               type="button"
-              className={`btn btn-primary w-full !py-3 !text-[0.7rem] ${
-                listening ? 'rec-live' : voiceBusy ? 'rec-thinking' : ''
-              }`}
+              className={`btn btn-primary w-full !py-3 !text-[0.7rem] ${listening ? 'rec-live' : ''}`}
               // Never disabled while listening — that click is the stop button.
-              disabled={phase !== 'idle' || voiceBusy}
-              aria-live="polite"
+              disabled={phase !== 'idle'}
               onClick={() => (listening ? sessionRef.current?.stop() : void runVoiceEntry())}
             >
-              {voiceBusy ? (
-                <>
-                  <Loader2 size={14} className="animate-spin" />
-                  Working out who raced…
-                </>
-              ) : listening ? (
+              {listening ? (
                 <>
                   {/* A steady red dot: the recording convention, and the one cue
                       that survives `prefers-reduced-motion` killing the ring. */}
@@ -637,10 +736,13 @@ export function AddScoreOverlay({
               What's heard surfaces on the grid rows instead, which is where it
               actually matters.
             */}
-            {voiceError && <p className="text-[0.65rem] text-danger">{voiceError}</p>}
-            {voiceNote && <p className="text-[0.65rem] text-[#FFB020]">{voiceNote}</p>}
           </>
-        )}
+        ) : null}
+
+        {/* Outside the branches: a failure or a caveat outlives the flow that
+            produced it, and must not vanish when the button comes back. */}
+        {voiceError && <p className="text-[0.65rem] text-danger">{voiceError}</p>}
+        {voiceNote && <p className="text-[0.65rem] text-[#FFB020]">{voiceNote}</p>}
       </div>
 
       {/* Roster. */}
