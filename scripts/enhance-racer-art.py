@@ -67,12 +67,99 @@ RAW = ROOT / "assets-src" / "racers-raw"
 # The official renders. Everything else gets matched to these.
 REFERENCE = ["Beast", "Dee", "Driftking", "Hotty", "Rex", "Turboboy", "Twins", "UFO", "tailfin"]
 
-# Ceilings, deliberately conservative. See the module docstring.
-MAX_CHROMA_GAIN = 1.55
 MAX_STRETCH = 2.2
 CAST_STRENGTH = 0.8      # how much of the measured colour cast to remove
-CLARITY_AMOUNT = 0.35
-CLARITY_RADIUS = 3.0
+
+# Per-kind, because the two kinds of art fail differently.
+#
+# A vehicle is a 400px render of a shiny object; it mostly needs its haze
+# removed and then leaving alone.
+#
+# A head-shot is a 120px painted icon lifted from video. It is soft, it is dull,
+# and — the part that took a second pass to notice — `match_median` is WRONG for
+# it. The reference median comes from official portraits, which are full-body
+# cut-outs on transparency: every measured pixel is character. A head-shot
+# includes its dark backdrop across a third of the frame, which legitimately
+# pulls its median down. Forcing that median up to the reference's brightened the
+# faces and flattened them, which is exactly the "overly highlighted, blended"
+# look. Head-shots therefore match SPREAD, not median: darker darks and brighter
+# brights at the same overall level.
+PROFILE = {
+    "vehicle": {
+        "chroma_max": 1.55,
+        "clarity": 0.35,
+        "clarity_radius": 3.0,
+        "match_median": True,
+        "gamma_range": (0.6, 1.7),
+    },
+    "headshot": {
+        "chroma_max": 1.95,
+        "clarity": 0.85,
+        # Small radius on a small image. A 3px radius on a 120px icon is a
+        # regional brightness shift, not sharpening.
+        "clarity_radius": 1.2,
+        "match_median": False,
+        "gamma_range": (0.92, 1.08),
+    },
+    "portrait": {
+        "chroma_max": 1.55,
+        "clarity": 0.35,
+        "clarity_radius": 3.0,
+        "match_median": True,
+        "gamma_range": (0.6, 1.7),
+    },
+}
+
+
+def s_curve(x: np.ndarray, g: float, pivot: float) -> np.ndarray:
+    """
+    Contrast curve that pins both endpoints and hinges on `pivot`.
+
+    Pure gamma can only push an image brighter or darker as a whole; it cannot
+    pull the shadows down AND the highlights up at once, which is what "needs
+    contrast" actually means. Two power segments joined at the pivot do both:
+
+        x < pivot   y = p·(x/p)^g                  flat at black, steep into p
+        x ≥ pivot   y = p + (1-p)·(1-((1-x)/(1-p))^g)   steep out of p, flat at white
+
+    Both map 0→0, pivot→pivot, 1→1, and meet with slope g at the pivot, so the
+    black and white points the levels pass established survive untouched.
+
+    The pivot is the image's OWN median, which makes this a pure contrast change
+    with no exposure shift: half the pixels sit below the hinge and get darker,
+    half sit above and get brighter, and the median comes out where it went in.
+
+    Two wrong pivots were tried first, and both failed in the same direction.
+    Hinging at mid-range took a head-shot's median from 43 to 52; hinging at the
+    reference midtone was worse, 43 to 64 — because with a low hinge almost every
+    pixel lands in the upper, lifting branch. Both were asked to add contrast and
+    delivered "brighter" instead. Only the self-median hinge separates the two.
+    """
+    if g <= 1.0 + 1e-6:
+        return x
+    p = float(np.clip(pivot, 0.05, 0.95))
+    below = p * np.power(np.clip(x, 0, None) / p, g)
+    above = p + (1 - p) * (1 - np.power(np.clip(1 - x, 0, None) / (1 - p), g))
+    return np.where(x < p, below, above)
+
+
+def solve_curve(x: np.ndarray, target_std: float, span: float, pivot: float) -> float:
+    """
+    Bisect for the curve strength that reaches the reference's tonal spread.
+
+    Solved rather than dialled in by hand, because "how much contrast" has an
+    answer here: as much as the official art has.
+    """
+    if np.std(x) * span >= target_std:
+        return 1.0  # already at or above the reference spread — don't touch it
+    lo, hi = 1.0, 6.0
+    for _ in range(40):
+        mid = (lo + hi) / 2
+        if np.std(s_curve(x, mid, pivot)) * span < target_std:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
 
 
 def load(path: Path):
@@ -135,7 +222,7 @@ def reference(kind: str) -> dict:
     }
 
 
-def enhance(lab: np.ndarray, opaque: np.ndarray, ref: dict, notes: list) -> np.ndarray:
+def enhance(lab: np.ndarray, opaque: np.ndarray, ref: dict, prof: dict, notes: list) -> np.ndarray:
     src = stats(lab, opaque)
     out = lab.copy()
     L, a, b = out[:, :, 0], out[:, :, 1], out[:, :, 2]
@@ -158,8 +245,8 @@ def enhance(lab: np.ndarray, opaque: np.ndarray, ref: dict, notes: list) -> np.n
     #    black point I had just set — every image reported a black point of 0.0
     #    instead of the reference's 1.8, and shadow detail was being clipped away
     #    after the work to place it. Levels last means the endpoints are exact.
-    blur = cv2.GaussianBlur(L, (0, 0), CLARITY_RADIUS)
-    L[:] = L + CLARITY_AMOUNT * (L - blur)
+    blur = cv2.GaussianBlur(L, (0, 0), prof["clarity_radius"])
+    L[:] = L + prof["clarity"] * (L - blur)
 
     # 3. Black and white point. Video-captured art never reaches true black, so
     #    this is the adjustment that does most of the visible work.
@@ -174,24 +261,42 @@ def enhance(lab: np.ndarray, opaque: np.ndarray, ref: dict, notes: list) -> np.n
     # 4. Gamma so the midtone lands where the reference's does. Levels alone fix
     #    the endpoints and leave the middle wherever it fell.
     lo, hi = ref["L_lo"], ref["L_hi"]
-    norm = np.clip((L - lo) / max(hi - lo, 1e-3), 0, 1)
-    med_now = np.clip((np.percentile(L[opaque], 50) - lo) / max(hi - lo, 1e-3), 1e-3, 0.999)
-    med_ref = np.clip((ref["L_med"] - lo) / max(hi - lo, 1e-3), 1e-3, 0.999)
-    gamma_want = np.log(med_ref) / np.log(med_now)
-    gamma = float(np.clip(gamma_want, 0.6, 1.7))
+    span = max(hi - lo, 1e-3)
+    norm = np.clip((L - lo) / span, 0, 1)
+    if prof["match_median"]:
+        med_now = np.clip((np.percentile(L[opaque], 50) - lo) / span, 1e-3, 0.999)
+        med_ref = np.clip((ref["L_med"] - lo) / span, 1e-3, 0.999)
+        gamma_want = np.log(med_ref) / np.log(med_now)
+    else:
+        gamma_want = 1.0
+    g_lo, g_hi = prof["gamma_range"]
+    gamma = float(np.clip(gamma_want, g_lo, g_hi))
     if abs(gamma - gamma_want) > 0.01:
         notes.append(f"gamma CLAMPED {gamma_want:.2f}→{gamma:.2f} "
                      f"(midtone will land above target)")
-    L[:] = np.power(norm, gamma) * (hi - lo) + lo
+    norm = np.power(norm, gamma)
 
-    # 5. Chroma. Scaling a and b together is a saturation change that leaves hue
+    # 5. Contrast: solve for the S-curve that reaches the reference's spread.
+    #    This is the step that answers "missing blacks and whites" — the levels
+    #    pass sets where black and white ARE, but only a curve puts pixels there.
+    pivot = float(np.median(norm[opaque]))
+    g = solve_curve(norm[opaque], ref["L_std"], span, pivot)
+    if g <= 1.0:
+        notes.append("spread already at reference — no contrast curve applied")
+    else:
+        notes.append(f"contrast curve g={g:.2f} hinged at own median "
+                     f"L*{pivot * span + lo:.1f} to reach spread {ref['L_std']:.1f}")
+    norm = s_curve(norm, g, pivot)
+    L[:] = norm * span + lo
+
+    # 6. Chroma. Scaling a and b together is a saturation change that leaves hue
     #    alone, which `-modulate`'s HSL saturation does not — that one pushes
     #    already-vivid reds until they clip, and clipped red loses its shading.
     have = stats(out, opaque)["chroma"]
     gain_want = ref["chroma"] / max(have, 1e-3)
-    gain = min(gain_want, MAX_CHROMA_GAIN)
-    if gain_want > MAX_CHROMA_GAIN:
-        notes.append(f"chroma gain CLAMPED {gain_want:.2f}→{MAX_CHROMA_GAIN}")
+    gain = min(gain_want, prof["chroma_max"])
+    if gain_want > prof["chroma_max"]:
+        notes.append(f"chroma gain CLAMPED {gain_want:.2f}→{prof['chroma_max']}")
     if gain < 1.0:
         # The reference chroma is a median across nine vehicles, several of them
         # largely black. A genuinely vivid car sits above it legitimately, and
@@ -252,7 +357,7 @@ def main():
         lab, alpha, opaque = load(path)
         before = stats(lab, opaque)
         notes: list = []
-        graded = enhance(lab, opaque, refs[kind], notes)
+        graded = enhance(lab, opaque, refs[kind], PROFILE[kind], notes)
         after = stats(graded, opaque)
 
         print(f"{stem}   ({before['n']:,} opaque px)")
