@@ -3,7 +3,7 @@
  *
  * ── Why a glob and not 36 imports ──────────────────────────────────────────
  *
- * Coverage is partial — 9 of 18 racers have art, the rest are still being cut
+ * Coverage is partial — 13 of 20 racers have art, the rest are still being cut
  * out of video by hand. `import.meta.glob` picks up whatever files exist at
  * build time, so adding a racer's art is `npm run art:racers` and a commit, with
  * no code change anywhere. A hand-written import list would need editing every

@@ -941,7 +941,7 @@ function ProfileEditor({
             <Label className="mb-1.5">
               Your racer
               <span className="ml-2 font-mono text-[0.55rem] normal-case tracking-normal text-[var(--text-faint)]">
-                {slugsWithArt().length} of {options?.racers.length ?? 18} have art
+                {slugsWithArt().length} of {options?.racers.length ?? 20} have art
               </span>
             </Label>
             <div className="flex flex-wrap gap-1.5">

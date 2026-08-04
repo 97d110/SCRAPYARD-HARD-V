@@ -64,6 +64,7 @@ const KNOWN_SLUGS = [
   'arthur', 'turboboy', 'hotty', 'tailfin', 'old-rowdy', 'beast',
   'pushback', 'arrow', 'predator', 'dipnoi', 'driftking', 'rex',
   'panzerflachbagger', 'dee', 'twins', 'ufo', 'mr-shnek', 'matthew-hell',
+  'natasha', 'vera',
 ];
 
 /**

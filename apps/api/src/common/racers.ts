@@ -55,6 +55,12 @@ export const RACERS: Racer[] = [
   { name: 'UFO', slug: 'ufo' },
   { name: 'Mr. Shnek', slug: 'mr-shnek' },
   { name: 'Matthew Hell', slug: 'matthew-hell' },
+  { name: 'Natasha', slug: 'natasha' },
+  // Slug drops the periods deliberately. Every other slug is a plain
+  // lowercase-and-hyphens transform of the name, but "V.E.R.A." would give
+  // "v-e-r-a", and a filename nobody can type from memory is a filename that
+  // gets typed wrong. The display name keeps its periods.
+  { name: 'V.E.R.A.', slug: 'vera' },
 ];
 
 /**
@@ -65,7 +71,7 @@ export const RACER_NAMES: string[] = RACERS.map((racer) => racer.name);
 
 /**
  * Display name → slug. Built once, because `toPublic` runs per racer per request
- * and a linear scan of 18 entries each time is needless work.
+ * and a linear scan of 20 entries each time is needless work.
  *
  * Unknown names fall back to '' rather than throwing: `favoriteRacer` is only
  * validated on write, so a name retired from the roster could still be sitting
