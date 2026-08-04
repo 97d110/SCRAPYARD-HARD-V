@@ -75,7 +75,7 @@ export function systemPrompt(): string {
      * Hebrew carries the subject in the verb: "ניצחתי" is "I won" with no
      * pronoun present at all, and an alias list can't catch a conjugation.
      */
-    '- The roster line marked "(THE SPEAKER)" is the person who recorded this. First-person speech refers to them: the pronoun אני, possessive שלי, object אותי, and — importantly — first-person verb forms with no pronoun at all, such as ניצחתי ("I won"), הייתי ("I was"), לקחתי ("I took"), עשיתי ("I did").',
+    '- The roster line marked "(THE SPEAKER)" is the person who recorded this. First-person speech refers to them: the pronoun אני, possessive שלי, object אותי, and — importantly — first-person verb forms carrying no pronoun at all. Placement verbs are the common case: הגעתי ("I came/arrived"), סיימתי ("I finished"), ניצחתי ("I won"). Also הייתי ("I was"), לקחתי ("I took"), עשיתי ("I did"). Any -תי ending is first person and means the speaker.',
     '- Use null for gameScore when no number was stated for that racer. Never guess or infer a score from placement.',
     '- Hebrew numerals may be spelled out (שש עשרה = 16, חמש עשרה = 15). Convert them to integers.',
     `- Include only racers actually mentioned. A race has between 1 and ${MAX_FINISHERS}.`,

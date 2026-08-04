@@ -111,6 +111,25 @@ const CASES: ProbeCase[] = [
     speakerId: 'r-amit',
     note: 'First-person VERB with no pronoun (ניצחתי) must resolve to the speaker.',
   },
+  {
+    /*
+     * Two rules at once, deliberately: the speaker is named FIRST but finished
+     * SECOND, so the ordinal has to beat word order at the same time as the
+     * first-person verb resolves. Realistic — people lead with their own result.
+     */
+    transcript: 'הגעתי שני עם 15, דנה ניצחה עם 16',
+    expected: ['r-dana', 'r-amit'],
+    expectedScores: [16, 15],
+    speakerId: 'r-amit',
+    note: 'הגעתי ("I came") as a placement verb, with the ordinal overriding word order.',
+  },
+  {
+    transcript: 'סיימתי שלישי, נועם ניצח, יעל שנייה',
+    expected: ['r-noam', 'r-yael', 'r-amit'],
+    expectedScores: [null, null, null],
+    speakerId: 'r-amit',
+    note: 'סיימתי ("I finished") — speaker said first, placed last, no scores given.',
+  },
 ];
 
 interface Finisher {
