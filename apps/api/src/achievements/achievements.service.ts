@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { DEFAULT_RACE_COLOR, UsersService } from '../users/users.service';
+import { UsersService } from '../users/users.service';
+import { DEFAULT_RACE_COLOR } from '../common/race-colors';
 import { MongoService } from '../database/mongo.service';
 import { ScoreboardRepository } from '../database/scoreboard.repository';
 import { MetricsService, MetricRegistry } from '../metrics/metrics.service';

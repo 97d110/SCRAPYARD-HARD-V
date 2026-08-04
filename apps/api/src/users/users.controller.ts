@@ -14,18 +14,17 @@ import {
   ArrayMaxSize,
   IsArray,
   IsEmail,
-  IsHexColor,
   IsIn,
   IsOptional,
   IsString,
   MaxLength,
   MinLength,
-  ValidateIf,
 } from 'class-validator';
 import { AdminGuard, CurrentUser, JwtAuthGuard } from '../auth/guards';
 import { ClientId } from '../live/client-id.decorator';
 import { LiveGateway } from '../live/live.gateway';
-import { RACE_COLORS, RACERS, UsersService } from './users.service';
+import { RACERS, UsersService } from './users.service';
+import { RACE_COLORS } from '../common/race-colors';
 import { AchievementsService } from '../achievements/achievements.service';
 import type { ProfileBundle, PublicUser, RaceColor } from '@scrapyard/shared';
 

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { DEFAULT_RACE_COLOR } from '../users/users.service';
+import { DEFAULT_RACE_COLOR } from '../common/race-colors';
 import { MongoService } from './mongo.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { DEFAULT_METRIC } from '../metrics/metrics.constants';

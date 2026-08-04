@@ -10,6 +10,7 @@ import { MongoService, UserDoc } from '../database/mongo.service';
 import { ScoreboardRepository } from '../database/scoreboard.repository';
 import { allowedDomains, isAllowedEmail } from '../common/access';
 import { blindIndex, decryptField, encryptField } from '../common/crypto';
+import { DEFAULT_RACE_COLOR, RACE_COLORS } from '../common/race-colors';
 import type { PublicUser, RaceColor, UserRecord, UserRole } from '@scrapyard/shared';
 import { dayKey, monthKey } from '../common/period.util';
 
@@ -38,21 +39,6 @@ export const RACERS = [
   'UFO',
   'Mr. Shnek',
 ] as const;
-
-/**
- * The four in-game car colors — a racer's car AND their colour throughout the
- * UI. There used to be a second free-hex `accentColor` for theming; two colours
- * on one profile read as the same setting twice, and only this one means
- * anything in the game.
- *
- * Duplicates across the roster are expected and allowed: four colours cannot go
- * around eight racers, so two people who both drive green look alike. That's the
- * accepted cost of the colour matching the car.
- */
-export const RACE_COLORS = ['blue', 'red', 'green', 'yellow'] as const;
-
-/** Everyone has a colour. Green is simply the one nobody had to choose. */
-export const DEFAULT_RACE_COLOR: RaceColor = 'green';
 
 /** Keeps one loud voice from crowding the extractor's prompt. */
 const MAX_ALIASES = 12;
