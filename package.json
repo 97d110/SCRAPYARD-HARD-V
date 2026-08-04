@@ -36,7 +36,8 @@
     "migrate:race-color": "ts-node -P apps/api/tsconfig.json apps/api/src/database/migrate-race-color.ts",
     "smoke": "ts-node -P apps/api/tsconfig.json apps/api/src/database/smoke.ts",
     "preflight": "ts-node -P apps/api/tsconfig.json apps/api/src/diagnostics/preflight.ts",
-    "probe:groq": "ts-node -P apps/api/tsconfig.json apps/api/src/diagnostics/groq-hebrew-probe.ts"
+    "probe:groq": "ts-node -P apps/api/tsconfig.json apps/api/src/diagnostics/groq-hebrew-probe.ts",
+    "art:racers": "node scripts/build-racer-art.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.6",
