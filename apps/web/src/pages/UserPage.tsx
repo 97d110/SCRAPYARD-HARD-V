@@ -24,6 +24,7 @@ import {
   Stat,
 } from '../components/ui/primitives';
 import { RACE_COLOR_HEX, RACE_COLORS } from '../lib/raceColors';
+import { avatarFor, racerArt, slugsWithArt } from '../lib/racerArt';
 import type {
   GameParticipation,
   ProfileBundle,
@@ -88,6 +89,7 @@ export function UserPage() {
 
   const { user, streaks, ranks, achievements, totals, columns, recentGames, rivals, activity } = bundle;
   const accent = RACE_COLOR_HEX[user.raceColor];
+  const heroAvatar = avatarFor(user);
   // Resolve a racer id to the fields RacerBadge needs (avatar + name + accent).
   const racerRef = (racerId: string) => {
     const other = userById(racerId);
@@ -117,7 +119,14 @@ export function UserPage() {
         </div>
 
         <div className="relative flex flex-col gap-6 sm:flex-row sm:items-start">
-          <Avatar src={user.avatarUrl} name={user.displayName} size={104} accent={accent} />
+          <Avatar
+            src={heroAvatar.src}
+            artwork={heroAvatar.isRacerArt}
+            vehicle={heroAvatar.vehicle}
+            name={user.displayName}
+            size={104}
+            accent={accent}
+          />
 
           <div className="min-w-0 flex-1">
             <Label>
@@ -734,9 +743,30 @@ function ProfileEditor({
    * a tag-chip editor would be more machinery for the same result.
    */
   const [hebrewAliases, setHebrewAliases] = useState(user.hebrewAliases.join(', '));
+  const [useRacerArt, setUseRacerArt] = useState(user.useRacerArt);
   /* Live preview: the panel, avatar ring and Save button all take the colour
    * being previewed, not the saved one, so the choice is visible before saving. */
   const previewAccent = RACE_COLOR_HEX[raceColor];
+
+  /*
+   * The editor holds an unsaved racer NAME, while art is keyed by slug — and the
+   * mapping lives on the server, arriving with `options`. Falls back to the slug
+   * the server already sent for this user, which is correct for the common case
+   * of opening the editor without changing racer.
+   */
+  const racerSlugFor = (name: string): string =>
+    options?.racers.find((racer) => racer.name === name)?.slug ?? user.racerSlug;
+
+  /*
+   * Previewed through the real resolver rather than a local approximation, so
+   * what the editor shows is exactly what every other avatar will show —
+   * including the fallback when the chosen racer has no art yet.
+   */
+  const preview = avatarFor({
+    avatarUrl,
+    racerSlug: racerSlugFor(favoriteRacer),
+    useRacerArt,
+  });
   const [options, setOptions] = useState<{ racers: RacerOption[] } | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -771,6 +801,7 @@ function ProfileEditor({
         avatarUrl,
         favoriteRacer,
         raceColor,
+        useRacerArt,
         hebrewAliases: hebrewAliases
           .split(',')
           .map((alias) => alias.trim())
@@ -799,7 +830,14 @@ function ProfileEditor({
       <div className="mt-6 grid gap-6 lg:grid-cols-[auto_1fr]">
         {/* Avatar column. */}
         <div className="flex flex-col items-center gap-3">
-          <Avatar src={avatarUrl} name={displayName} size={112} accent={previewAccent} />
+          <Avatar
+            src={preview.src}
+            artwork={preview.isRacerArt}
+            vehicle={preview.vehicle}
+            name={displayName}
+            size={112}
+            accent={previewAccent}
+          />
           <input
             ref={fileRef}
             type="file"
@@ -828,6 +866,30 @@ function ProfileEditor({
               <RotateCcw size={13} /> Google
             </NeonButton>
           </div>
+          {/*
+            A priority switch, not a mode: Upload and Google still set the photo
+            underneath, and this decides whether the character outranks it.
+            Ticking it for a racer with no art yet is a valid state — the photo
+            shows through, and the character appears by itself once the art lands.
+          */}
+          <label className="flex max-w-[13rem] cursor-pointer items-start gap-2 text-left">
+            <input
+              type="checkbox"
+              checked={useRacerArt}
+              onChange={(event) => setUseRacerArt(event.target.checked)}
+              className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-current"
+              style={{ accentColor: previewAccent }}
+            />
+            <span className="text-[0.62rem] leading-snug text-[var(--text-dim)]">
+              Use my racer&rsquo;s art as my picture
+              {useRacerArt && !preview.isRacerArt && (
+                <span className="mt-0.5 block text-[var(--text-faint)]">
+                  {favoriteRacer} has no art yet — showing your photo until it does.
+                </span>
+              )}
+            </span>
+          </label>
+
           <p className="max-w-[12rem] text-center text-[0.6rem] leading-snug text-[var(--text-faint)]">
             Defaults to your Google photo. Uploads are resized to 256px.
           </p>
@@ -868,7 +930,12 @@ function ProfileEditor({
           </div>
 
           <div>
-            <Label className="mb-1.5">Your ride</Label>
+            <Label className="mb-1.5">
+              Your racer
+              <span className="ml-2 font-mono text-[0.55rem] normal-case tracking-normal text-[var(--text-faint)]">
+                {slugsWithArt().length} of {options?.racers.length ?? 18} have art
+              </span>
+            </Label>
             <div className="flex flex-wrap gap-1.5">
               {/* Until options load, show the racer they already have so the
                   row is never empty. */}
@@ -892,6 +959,16 @@ function ProfileEditor({
                         : undefined
                     }
                   >
+                    {/* The portrait where it exists, so the choice is visual and
+                        it's obvious at a glance which racers are still to come. */}
+                    {racerArt(racer.slug) && (
+                      <img
+                        src={racerArt(racer.slug)!.portraitSmall}
+                        alt=""
+                        aria-hidden="true"
+                        className="mr-1 inline-block h-4 w-4 align-middle object-contain object-bottom"
+                      />
+                    )}
                     {racer.name}
                   </button>
                 );

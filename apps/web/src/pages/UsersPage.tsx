@@ -5,6 +5,7 @@ import { useApp } from '../state/AppStore';
 import { Avatar, Label, Panel, Segmented } from '../components/ui/primitives';
 import { RACE_COLOR_HEX } from '../lib/raceColors';
 import { RacerStats, statsFromUser } from '../components/RacerStats';
+import { avatarFor } from '../lib/racerArt';
 
 type SortKey = 'wins' | 'name' | 'newest';
 
@@ -105,7 +106,7 @@ export function UsersPage() {
 
                 <span className="flex min-w-0 items-center gap-3">
                   <Avatar
-                    src={user.avatarUrl}
+                    {...(({ src, isRacerArt }) => ({ src, artwork: isRacerArt }))(avatarFor(user))}
                     name={user.displayName}
                     size={36}
                     accent={RACE_COLOR_HEX[user.raceColor]}
@@ -172,7 +173,7 @@ export function UsersPage() {
                     {i + 1}
                   </span>
                   <Avatar
-                    src={user.avatarUrl}
+                    {...(({ src, isRacerArt }) => ({ src, artwork: isRacerArt }))(avatarFor(user))}
                     name={user.displayName}
                     size={42}
                     accent={RACE_COLOR_HEX[user.raceColor]}

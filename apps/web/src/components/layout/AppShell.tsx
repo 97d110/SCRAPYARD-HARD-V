@@ -10,6 +10,7 @@ import { FinishFlourish } from '../celebration/FinishFlourish';
 import { ArthurShipFx } from '../arthur/ArthurShipFx';
 import { Avatar } from '../ui/primitives';
 import { RACE_COLOR_HEX } from '../../lib/raceColors';
+import { avatarFor } from '../../lib/racerArt';
 
 /**
  * The chrome every page sits inside: pun ticker at the very top, then the
@@ -205,7 +206,7 @@ function AccountCard({ me }: { me: PublicUser }) {
         className="group flex items-center gap-3 border border-hairline bg-white/[0.02] px-3 py-2.5 transition hover:border-plasma/60"
         style={{ ['--glow' as string]: RACE_COLOR_HEX[me.raceColor] }}
       >
-        <Avatar src={me.avatarUrl} name={me.displayName} size={36} accent={RACE_COLOR_HEX[me.raceColor]} />
+        <Avatar {...(({ src, isRacerArt }) => ({ src, artwork: isRacerArt }))(avatarFor(me))} name={me.displayName} size={36} accent={RACE_COLOR_HEX[me.raceColor]} />
         <span className="min-w-0 flex-1 text-left">
           <span className="block truncate font-display text-xs font-bold uppercase tracking-wider text-white">
             {me.displayName}

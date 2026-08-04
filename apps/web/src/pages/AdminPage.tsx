@@ -56,6 +56,7 @@ import {
 } from '../components/ui/primitives';
 import { RACE_COLOR_HEX, RACE_COLORS } from '../lib/raceColors';
 import { RacerStats, statsFromUser } from '../components/RacerStats';
+import { avatarFor } from '../lib/racerArt';
 import type {
   AchievementRule,
   AchievementScope,
@@ -970,7 +971,7 @@ function CrewRow({
     >
       <div className="flex flex-wrap items-center gap-3">
         <Avatar
-          src={user.avatarUrl || undefined}
+          {...(({ src, isRacerArt }) => ({ src, artwork: isRacerArt }))(avatarFor(user))}
           name={user.displayName}
           accent={RACE_COLOR_HEX[user.raceColor]}
           size={36}

@@ -11,7 +11,7 @@ import { ScoreboardRepository } from '../database/scoreboard.repository';
 import { allowedDomains, isAllowedEmail } from '../common/access';
 import { blindIndex, decryptField, encryptField } from '../common/crypto';
 import { DEFAULT_RACE_COLOR, RACE_COLORS } from '../common/race-colors';
-import { RACER_NAMES } from '../common/racers';
+import { RACER_NAMES, racerSlug } from '../common/racers';
 import type { PublicUser, RaceColor, UserRecord, UserRole } from '@scrapyard/shared';
 import { dayKey, monthKey } from '../common/period.util';
 
@@ -518,6 +518,7 @@ export class UsersService {
       raceColor: user.raceColor ?? DEFAULT_RACE_COLOR,
       hebrewAliases: user.hebrewAliases ?? [],
       useRacerArt: user.useRacerArt ?? false,
+      racerSlug: racerSlug(user.favoriteRacer),
       createdAt: user.createdAt,
       claimed: Boolean(user.googleId),
       scores: {

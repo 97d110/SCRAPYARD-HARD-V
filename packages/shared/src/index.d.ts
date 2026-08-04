@@ -329,6 +329,14 @@ export interface PublicUser {
   raceColor: RaceColor;
   hebrewAliases: string[];
   useRacerArt: boolean;
+  /**
+   * `favoriteRacer`'s URL-safe slug, derived server-side.
+   *
+   * Shipped rather than derived on the client so the two never disagree, and so
+   * every avatar has what it needs to resolve art without a second request.
+   * Empty when the stored name matches no current roster entry.
+   */
+  racerSlug: string;
   createdAt: string;
   claimed: boolean;
   scores: UserScores;
@@ -344,6 +352,13 @@ export interface LeaderboardEntry {
   avatarUrl: string;
   raceColor: RaceColor;
   favoriteRacer: string;
+  /**
+   * Both needed to draw this row's avatar — a racer who chose character art
+   * should show it on the board too, not only on their own profile. See
+   * `avatarFor` on the client.
+   */
+  racerSlug: string;
+  useRacerArt: boolean;
   /** Convenience mirror of `metrics[defaultMetric]` — the value rows rank by. */
   primary: number;
   /** Every metric's period total for this racer, keyed by metric id. */

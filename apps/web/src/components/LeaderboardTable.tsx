@@ -5,6 +5,7 @@ import { Avatar, Label, Panel } from './ui/primitives';
 import type { LeaderboardEntry, MetricColumn, Scoreboard } from '@scrapyard/shared';
 import { RACE_COLOR_HEX } from '../lib/raceColors';
 import { RacerStats, statsFromEntry } from './RacerStats';
+import { avatarFor } from '../lib/racerArt';
 
 /**
  * The leaderboard. Podium cards for the top three by in-game score, then a
@@ -199,7 +200,7 @@ export function LeaderboardTable({
                 }`}
               >
                 <Avatar
-                  src={entry.avatarUrl}
+                  {...(({ src, isRacerArt }) => ({ src, artwork: isRacerArt }))(avatarFor(entry))}
                   name={entry.displayName}
                   size={22}
                   accent={RACE_COLOR_HEX[entry.raceColor]}
@@ -315,7 +316,7 @@ function SortableTable({
 
             <span className="flex min-w-0 items-center gap-2.5 px-3 py-3 sm:gap-3">
               <Avatar
-                src={entry.avatarUrl}
+                {...(({ src, isRacerArt }) => ({ src, artwork: isRacerArt }))(avatarFor(entry))}
                 name={entry.displayName}
                 size={32}
                 accent={RACE_COLOR_HEX[entry.raceColor]}
@@ -402,8 +403,13 @@ function PodiumCard({
         )}
 
         <div className="relative flex items-center gap-4">
+          {/* Podium is the one list-ish place that carries the car: 30% rather
+              than 20%, because 20% of a 56px avatar is an 11px smudge. */}
           <Avatar
-            src={entry.avatarUrl}
+            {...(({ src, isRacerArt, vehicle }) => ({ src, artwork: isRacerArt, vehicle }))(
+              avatarFor(entry),
+            )}
+            vehicleScale={0.3}
             name={entry.displayName}
             size={slot === 1 ? 68 : 56}
             accent={RACE_COLOR_HEX[entry.raceColor]}

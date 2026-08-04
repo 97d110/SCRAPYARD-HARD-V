@@ -101,6 +101,9 @@ export function Avatar({
   accent = '#00E5FF',
   rank,
   className = '',
+  artwork = false,
+  vehicle,
+  vehicleScale = 0.2,
 }: {
   src?: string;
   name: string;
@@ -109,6 +112,28 @@ export function Avatar({
   /** Renders a rank pip in the corner. */
   rank?: number;
   className?: string;
+  /**
+   * True when `src` is character art rather than a photo.
+   *
+   * Photos are square-ish and want `cover` — filling the circle, cropping the
+   * edges. Character art is a tall transparent cut-out, and `cover` would zoom
+   * it until the head left the frame. So it gets `contain`, sat on the tinted
+   * plate the initials fallback already uses, and anchored to the bottom so the
+   * character stands on the circle rather than floating in it.
+   */
+  artwork?: boolean;
+  /** Vehicle art for the corner badge. Opt-in per call site — see vehicleScale. */
+  vehicle?: string | null;
+  /**
+   * Vehicle size as a fraction of the avatar.
+   *
+   * Per call site rather than one global number, because a badge legible at
+   * 112px is a smudge at 34px. 0.2 on the profile hero and editor preview, 0.3
+   * on podium places, and no vehicle at all on list avatars — a decision the
+   * caller makes explicitly, so the car can't silently appear when someone
+   * adjusts an avatar's size.
+   */
+  vehicleScale?: number;
 }) {
   const initials = name
     .split(/\s+/)
@@ -137,12 +162,17 @@ export function Avatar({
           width={size}
           height={size}
           loading="lazy"
-          className="relative z-10 rounded-full object-cover"
+          className={`relative z-10 rounded-full ${artwork ? 'object-contain object-bottom' : 'object-cover'}`}
           style={{
             width: size - 4,
             height: size - 4,
             boxShadow: `0 0 18px -4px ${accent}`,
-            background: '#0d1122',
+            // Art is a transparent cut-out, so it needs the same tinted plate
+            // the initials fallback sits on — otherwise it floats on whatever
+            // happens to be behind the avatar.
+            background: artwork
+              ? `radial-gradient(circle at 30% 25%, ${accent}44, #0d1122 70%)`
+              : '#0d1122',
           }}
         />
       ) : (
@@ -158,6 +188,27 @@ export function Avatar({
         >
           {initials || '?'}
         </span>
+      )}
+      {/*
+        The car, bottom-LEFT. The rank pip below holds bottom-right, so the two
+        can share an avatar on the podium without overlapping.
+      */}
+      {vehicle && (
+        <img
+          src={vehicle}
+          alt=""
+          aria-hidden="true"
+          loading="lazy"
+          className="pointer-events-none absolute bottom-0 left-0 z-20 object-contain"
+          style={{
+            width: Math.round(size * vehicleScale * 1.6),
+            height: Math.round(size * vehicleScale),
+            // Nudged outside the rim so the car reads as a badge on the circle
+            // rather than something trapped inside it.
+            transform: 'translate(-12%, 12%)',
+            filter: `drop-shadow(0 0 6px rgb(0 0 0 / 0.8))`,
+          }}
+        />
       )}
       {rank !== undefined && rank <= 3 && (
         <span

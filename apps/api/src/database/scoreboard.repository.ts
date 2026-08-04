@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DEFAULT_RACE_COLOR } from '../common/race-colors';
+import { racerSlug } from '../common/racers';
 import { MongoService } from './mongo.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { DEFAULT_METRIC } from '../metrics/metrics.constants';
@@ -64,6 +65,7 @@ export class ScoreboardRepository {
         avatarUrl: string;
         raceColor: RaceColor;
         favoriteRacer: string;
+        useRacerArt?: boolean;
       };
     };
 
@@ -115,6 +117,8 @@ export class ScoreboardRepository {
         avatarUrl: row.user.avatarUrl,
         raceColor: row.user.raceColor ?? DEFAULT_RACE_COLOR,
         favoriteRacer: row.user.favoriteRacer,
+        racerSlug: racerSlug(row.user.favoriteRacer),
+        useRacerArt: row.user.useRacerArt ?? false,
         primary: metrics[DEFAULT_METRIC] ?? 0,
         metrics,
         tied,
@@ -128,7 +132,7 @@ export class ScoreboardRepository {
     const unscored = await users
       .find(
         { _id: { $nin: [...scored] } },
-        { projection: { displayName: 1, avatarUrl: 1, raceColor: 1, favoriteRacer: 1 } },
+        { projection: { displayName: 1, avatarUrl: 1, raceColor: 1, favoriteRacer: 1, useRacerArt: 1 } },
       )
       .sort({ displayName: 1 })
       .toArray();
@@ -143,6 +147,8 @@ export class ScoreboardRepository {
         avatarUrl: user.avatarUrl,
         raceColor: user.raceColor ?? DEFAULT_RACE_COLOR,
         favoriteRacer: user.favoriteRacer,
+        racerSlug: racerSlug(user.favoriteRacer),
+        useRacerArt: user.useRacerArt ?? false,
         primary: 0,
         metrics: { ...zeroMetrics },
         tied: i > 0 || rows.length > 0,

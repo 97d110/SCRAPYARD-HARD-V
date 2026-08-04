@@ -20,6 +20,7 @@ import { recordAudio, speechSupported, type RecordingSession } from '../lib/spee
 import type { GameResultInput, KillEventInput, MetricDef, PublicUser } from '@scrapyard/shared';
 import { RACE_COLOR_HEX } from '../lib/raceColors';
 import { RacerStats, statsFromUser } from './RacerStats';
+import { avatarFor } from '../lib/racerArt';
 
 /**
  * The race-entry overlay.
@@ -839,7 +840,7 @@ export function AddScoreOverlay({
                   }
                 >
                   <Avatar
-                    src={user.avatarUrl}
+                    {...(({ src, isRacerArt }) => ({ src, artwork: isRacerArt }))(avatarFor(user))}
                     name={user.displayName}
                     size={38}
                     accent={RACE_COLOR_HEX[user.raceColor]}

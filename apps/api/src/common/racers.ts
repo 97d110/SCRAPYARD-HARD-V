@@ -63,5 +63,20 @@ export const RACERS: Racer[] = [
  */
 export const RACER_NAMES: string[] = RACERS.map((racer) => racer.name);
 
+/**
+ * Display name → slug. Built once, because `toPublic` runs per racer per request
+ * and a linear scan of 18 entries each time is needless work.
+ *
+ * Unknown names fall back to '' rather than throwing: `favoriteRacer` is only
+ * validated on write, so a name retired from the roster could still be sitting
+ * in an old document, and a profile page is the wrong place to discover that.
+ * An empty slug simply resolves to no art.
+ */
+const SLUG_BY_NAME = new Map(RACERS.map((racer) => [racer.name, racer.slug]));
+
+export function racerSlug(name: string): string {
+  return SLUG_BY_NAME.get(name) ?? '';
+}
+
 /** Every slug, for the asset script to check its filenames against. */
 export const RACER_SLUGS: string[] = RACERS.map((racer) => racer.slug);

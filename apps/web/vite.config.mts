@@ -60,6 +60,19 @@ export default defineConfig({
   },
 
   build: {
+    /*
+     * Keep racer art out of the JS bundle.
+     *
+     * Vite inlines any asset under 4 KB as a base64 data URI, which swallowed
+     * the 96px portraits and 48px vehicles — adding ~93 KB to the main chunk in
+     * base64 (a third larger than the binary), downloaded by everyone whether
+     * they see those racers or not, and cacheable only as long as the JS itself.
+     *
+     * Emitted as files instead they're content-hashed into dist/assets, which is
+     * the one path serve-spa.ts gives the immutable year-long cache header. Each
+     * one is then fetched once, ever, and only if actually rendered.
+     */
+    assetsInlineLimit: (filePath: string) => (filePath.endsWith('.webp') ? false : undefined),
     outDir: 'dist',
     emptyOutDir: true,
     sourcemap: true,
