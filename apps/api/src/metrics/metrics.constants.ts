@@ -8,9 +8,9 @@ import type { GameResult, MetricAggregation, MetricDef } from '@scrapyard/shared
  * (kills, …) and formula metrics (Combat = 2·kills − deaths) are documents in
  * the `metrics` collection — see MetricsService.
  *
- * Boards rank on `wins` — first-place finishes, summed per period — with score,
- * best score and the rest alongside as sortable columns. The client can re-sort
- * any board by any metric column.
+ * Boards rank on `wins` — first-place finishes, summed per period — with the
+ * rest alongside as sortable columns. The client can re-sort any board by any
+ * metric column.
  */
 
 export const WINS_METRIC = 'wins';
@@ -18,16 +18,25 @@ export const WINS_METRIC = 'wins';
 export const DEFAULT_METRIC = 'wins';
 
 /**
- * Built-in derived metrics, in display order (the ranking metric leads). `order`
- * 0–99 is reserved for these; captured metrics start at 100 and formulas at 200
- * (see MetricsService).
+ * Built-in derived metrics, in display order. `order` 0–99 is reserved for
+ * these; captured metrics start at 100 and formulas at 200 (see MetricsService).
+ *
+ * The first three lead deliberately, and in this exact sequence: wins, races,
+ * score IS the board's tiebreak chain (most wins, then fewest races, then
+ * highest score — see LeaderboardTable's comparator). Reading the columns left
+ * to right therefore reads out why the rows are in the order they're in, and it
+ * matches the `w / r / s` trio shown beside racers elsewhere.
+ *
+ * Anything after those three is genuinely supplementary — interesting, but not
+ * part of deciding position. Renumbering here reorders columns on every board
+ * and on the profile page at once, which is the point: one source of order.
  */
 export const BUILT_IN_METRICS: MetricDef[] = [
   { id: 'wins', label: 'Wins', icon: 'crown', unit: 'wins', description: 'First-place finishes — the main ranking.', kind: 'derived', aggregation: 'sum', order: 0, enabled: true, builtin: true },
-  { id: 'gameScore', label: 'Score', icon: 'gauge', unit: 'pts', description: 'Total in-game score across all races.', kind: 'derived', aggregation: 'sum', order: 1, enabled: true, builtin: true },
-  { id: 'bestScore', label: 'Best score', icon: 'zap', unit: 'pts', description: 'Highest in-game score in a single race.', kind: 'derived', aggregation: 'max', order: 2, enabled: true, builtin: true },
-  { id: 'podiums', label: 'Podiums', icon: 'medal', unit: 'top-3', description: 'Finishes in the top three.', kind: 'derived', aggregation: 'sum', order: 3, enabled: true, builtin: true },
-  { id: 'races', label: 'Races', icon: 'flag', unit: 'races', description: 'Races entered.', kind: 'derived', aggregation: 'sum', order: 4, enabled: true, builtin: true },
+  { id: 'races', label: 'Races', icon: 'flag', unit: 'races', description: 'Races entered. Fewer races ranks higher when wins are tied.', kind: 'derived', aggregation: 'sum', order: 1, enabled: true, builtin: true },
+  { id: 'gameScore', label: 'Score', icon: 'gauge', unit: 'pts', description: 'Total in-game score across all races. The last tiebreak.', kind: 'derived', aggregation: 'sum', order: 2, enabled: true, builtin: true },
+  { id: 'bestScore', label: 'Best score', icon: 'zap', unit: 'pts', description: 'Highest in-game score in a single race.', kind: 'derived', aggregation: 'max', order: 3, enabled: true, builtin: true },
+  { id: 'podiums', label: 'Podiums', icon: 'medal', unit: 'top-3', description: 'Finishes in the top three.', kind: 'derived', aggregation: 'sum', order: 4, enabled: true, builtin: true },
   { id: 'avgPlace', label: 'Avg place', icon: 'list-ordered', unit: 'place', description: 'Average finishing position (lower is better).', kind: 'derived', aggregation: 'avg', order: 5, enabled: true, builtin: true },
 ];
 
