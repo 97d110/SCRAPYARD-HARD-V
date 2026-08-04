@@ -4,7 +4,9 @@
  *   node scripts/build-racer-art.mjs
  *   npm run art:racers
  *
- * Reads   assets-src/racers/<Name>_portrait.png  and  <Name>_vehicle.png
+ * Reads   assets-src/racers/<Name>_portrait.png   full-body cut-out on transparency
+ *         assets-src/racers/<Name>_headshot.png  the game's own square avatar icon
+ *         assets-src/racers/<Name>_vehicle.png
  * Writes  apps/web/src/assets/racers/<slug>-<kind>-<size>.webp
  *
  * ── Why this exists ────────────────────────────────────────────────────────
@@ -58,6 +60,24 @@ const VARIANTS = {
   vehicle: [192],
 };
 const QUALITY = 82;
+
+/**
+ * Two kinds of source fill the portrait slot, and they need opposite framing.
+ *
+ * A `_portrait` is official full-body art on transparency — tall, and it wants
+ * to be fitted by height so the character stands on the bottom of the avatar
+ * circle. That is what `Avatar`'s `object-contain object-bottom` is for.
+ *
+ * A `_headshot` is the game's own avatar icon: a painted face on a backdrop,
+ * roughly but not exactly square (119x116, 117x118). Fitted by contain, that
+ * "roughly" is the whole problem — a 119x116 image in a square box letterboxes
+ * by 3px, and `object-bottom` puts the entire shortfall at the top as a black
+ * sliver. So head-shots are squared HERE, at build time, by filling the box and
+ * centre-cropping the overflow. An exactly square image in a square box has
+ * nothing left to letterbox, which fixes the gap without `Avatar` needing to
+ * know which kind of art it was handed.
+ */
+const PORTRAIT_SLOT = { portrait: 'portrait', headshot: 'portrait', vehicle: 'vehicle' };
 
 /** Mirrors RACER_SLUGS in apps/api/src/common/racers.ts. */
 const KNOWN_SLUGS = [
@@ -117,13 +137,16 @@ function main() {
   let bytesOut = 0;
 
   for (const file of sources.sort()) {
-    const match = /^(.+?)_(portrait|vehicle)\.png$/i.exec(file);
+    const match = /^(.+?)_(portrait|headshot|vehicle)\.png$/i.exec(file);
     if (!match) {
-      console.warn(`  skipped ${file} — expected <Name>_portrait.png or <Name>_vehicle.png`);
+      console.warn(`  skipped ${file} — expected <Name>_portrait.png, _headshot.png or _vehicle.png`);
       continue;
     }
     const slug = slugify(match[1]);
     const kind = match[2].toLowerCase();
+    // Head-shots and portraits are two framings of one slot, so they share an
+    // output name and the registry never learns the difference.
+    const slot = PORTRAIT_SLOT[kind];
 
     if (!KNOWN_SLUGS.includes(slug)) {
       unknown.push(`${file} → "${slug}"`);
@@ -132,23 +155,40 @@ function main() {
 
     bytesIn += statSync(join(SRC, file)).size;
     const record = seen.get(slug) ?? { portrait: false, vehicle: false };
-    record[kind] = true;
+    /*
+     * Both framings of the same racer would write the same output files, with
+     * whichever sorted later silently winning. Loud, because the symptom would
+     * otherwise be "the art looks wrong" with nothing pointing at the cause.
+     */
+    if (record[slot]) {
+      unknown.push(`${file} → "${slug}" already has a ${slot}; pick one framing`);
+      continue;
+    }
+    record[slot] = true;
     seen.set(slug, record);
 
-    for (const size of VARIANTS[kind]) {
-      const out = join(OUT, `${slug}-${kind}-${size}.webp`);
+    for (const size of VARIANTS[slot]) {
+      const out = join(OUT, `${slug}-${slot}-${size}.webp`);
       /*
-       * Portraits are reliably taller than wide, so height is the constraint.
+       * Full-body portraits are reliably taller than wide, so height is the
+       * constraint.
+       *
+       * Head-shots FILL a square box and centre-crop the overflow — `^` means
+       * "cover, not contain" — so the result is exactly square. See the note on
+       * PORTRAIT_SLOT for why that squareness is load-bearing.
        *
        * Vehicles are NOT reliably either way — the cut-outs range from 1:1
        * (Beast) to 1.6:1 (Turboboy) — so they get a square box to fit inside.
        * Constraining width alone would let a car cut taller than wide come out
        * oversized, and that's a filename away from happening.
        */
-      const geometry = kind === 'portrait' ? `x${size}` : `${size}x${size}`;
+      const geometry =
+        kind === 'headshot' ? [`${size}x${size}^`, '-gravity', 'center', '-extent', `${size}x${size}`]
+        : kind === 'portrait' ? [`x${size}`]
+        : [`${size}x${size}`];
       execFileSync('convert', [
         join(SRC, file),
-        '-resize', geometry,
+        '-resize', ...geometry,
         // Drop colour profiles and EXIF: a few KB of metadata nobody reads.
         '-strip',
         '-quality', String(QUALITY),

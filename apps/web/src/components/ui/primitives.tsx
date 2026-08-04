@@ -120,6 +120,14 @@ export function Avatar({
    * it until the head left the frame. So it gets `contain`, sat on the tinted
    * plate the initials fallback already uses, and anchored to the bottom so the
    * character stands on the circle rather than floating in it.
+   *
+   * `contain` stays correct for the racers whose art is a square head-shot
+   * rather than a full-body cut-out, because those are squared when the asset is
+   * cut — a square image in this square box has nothing left to letterbox. That
+   * is deliberate and it is load-bearing: leaving the head-shots at their native
+   * 119x116 left a 3px black sliver along the top of the circle, which
+   * `object-bottom` guarantees lands somewhere visible. See PORTRAIT_SLOT in
+   * scripts/build-racer-art.mjs.
    */
   artwork?: boolean;
   /** Vehicle art for the corner badge. Opt-in per call site — see vehicleScale. */
