@@ -361,6 +361,18 @@ export function AddScoreOverlay({
   const toggleRacer = (racerId: string) => {
     if (phase !== 'idle') return;
     setError(null);
+
+    /*
+     * Clear the search once someone has been picked, so the roster is whole
+     * again for the next name — a filtered list is only useful up to the moment
+     * you've found who you were looking for. Decided out here rather than inside
+     * the updater below, both because a state setter shouldn't have side effects
+     * and because this must only fire on ADD: clearing the search when someone
+     * taps the X to remove a racer would be unprompted and confusing.
+     */
+    const alreadyRacing = finishers.some((f) => f.racerId === racerId);
+    if (!alreadyRacing && finishers.length < 4) setQuery('');
+
     setFinishers((prev) => {
       const existing = prev.findIndex((f) => f.racerId === racerId);
       if (existing !== -1) return prev.filter((f) => f.racerId !== racerId);

@@ -1,8 +1,8 @@
 import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { IsString, MaxLength, MinLength } from 'class-validator';
-import { JwtAuthGuard } from '../auth/guards';
+import { CurrentUser, JwtAuthGuard } from '../auth/guards';
 import { VoiceService } from './voice.service';
-import type { VoiceDraft } from '@scrapyard/shared';
+import type { PublicUser, VoiceDraft } from '@scrapyard/shared';
 
 export class VoiceDraftDto {
   /**
@@ -39,9 +39,15 @@ export class VoiceController {
     return { available: this.voice.available() };
   }
 
-  /** Recording in, draft form fields out. Records nothing. */
+  /**
+   * Recording in, draft form fields out. Records nothing.
+   *
+   * The caller's own id goes along so first-person speech resolves — someone
+   * saying "ניצחתי עם 16" ("I won with 16") means themselves, and the server
+   * knows who that is from the session rather than needing it said aloud.
+   */
   @Post('draft')
-  async draft(@Body() dto: VoiceDraftDto): Promise<VoiceDraft> {
-    return this.voice.draftFromAudio(dto.audio);
+  async draft(@Body() dto: VoiceDraftDto, @CurrentUser() actor: PublicUser): Promise<VoiceDraft> {
+    return this.voice.draftFromAudio(dto.audio, actor.id);
   }
 }

@@ -22,6 +22,7 @@
  * to. Needs GROQ_API_KEY in apps/api/.env — the key is never printed.
  */
 import '../common/load-env';
+import { buildSchema, systemPrompt, userPrompt } from '../voice/prompt';
 
 /**
  * Groq by default, but overridable: any OpenAI-compatible gateway works here,
@@ -54,15 +55,17 @@ interface ProbeCase {
   expected: string[];
   /** Scores in the same order; null where the sentence doesn't state one. */
   expectedScores: Array<number | null>;
+  /** Who is speaking, for the cases that test first-person resolution. */
+  speakerId?: string;
   /** Why this case is here — printed on failure so the result is diagnosable. */
   note: string;
 }
 
 /*
- * Deliberately not four clean variations of the same sentence. Each case
- * isolates something that could independently break: first-name-only speech,
- * surnames, spelled-out Hebrew numerals, and a sentence that never mentions
- * scores at all.
+ * Deliberately not variations of one sentence. Each case isolates something
+ * that could independently break: first-name-only speech, surnames, spelled-out
+ * Hebrew numerals, a sentence with no scores at all, and first-person speech —
+ * which in Hebrew often carries the subject in the verb rather than a pronoun.
  */
 const CASES: ProbeCase[] = [
   {
@@ -89,64 +92,26 @@ const CASES: ProbeCase[] = [
     expectedScores: [null, null, null],
     note: 'First names, placement by words alone, no scores.',
   },
-];
-
-/**
- * Strict mode's requirements are unusual and easy to trip over: every property
- * must appear in `required`, and every object needs `additionalProperties:
- * false`. Nullable fields therefore have to be expressed as a type union
- * (`['integer', 'null']`) rather than by omitting them from `required`.
- */
-const SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['finishers'],
-  properties: {
-    finishers: {
-      type: 'array',
-      description: 'Racers in finishing order, winner first. Omit anyone not mentioned.',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['racerId', 'heardAs', 'gameScore'],
-        properties: {
-          racerId: {
-            type: 'string',
-            enum: ROSTER.map((r) => r.id),
-            description: 'Must be one of the supplied roster ids.',
-          },
-          heardAs: {
-            type: 'string',
-            description: 'The name exactly as it appeared in the transcript.',
-          },
-          gameScore: {
-            type: ['integer', 'null'],
-            description: 'The score stated for this racer, or null if none was said.',
-          },
-        },
-      },
-    },
+  {
+    transcript: 'אני ניצחתי עם 16, אחר כך דנה עם 15',
+    expected: ['r-amit', 'r-dana'],
+    expectedScores: [16, 15],
+    speakerId: 'r-amit',
+    note: 'Explicit אני ("I") must resolve to the speaker, not be dropped.',
   },
-} as const;
-
-const SYSTEM_PROMPT = [
-  'You extract race results from a spoken Hebrew sentence for a BlazeRush leaderboard.',
-  '',
-  'Rules:',
-  '- Return racers in FINISHING ORDER, winner first. Word order in the sentence usually matches, but explicit ordinals (ראשון/שני/שלישי/רביעי) win over word order when they disagree.',
-  '- Match each spoken name to exactly one roster entry, using the Hebrew aliases. Names may be said as a first name, a surname, or both.',
-  '- Use null for gameScore when no number was stated for that racer. Never guess or infer a score from placement.',
-  '- Hebrew numerals may be spelled out (שש עשרה = 16, חמש עשרה = 15). Convert them to integers.',
-  '- Include only racers actually mentioned. A race can have as few as one.',
-  '- If a spoken name matches no roster entry, leave that racer out entirely rather than guessing the closest one.',
-].join('\n');
-
-function buildUserPrompt(transcript: string): string {
-  const roster = ROSTER.map(
-    (r) => `- id=${r.id} | name=${r.displayName} | hebrew: ${r.hebrewAliases.join(', ')}`,
-  ).join('\n');
-  return `Roster:\n${roster}\n\nTranscript:\n${transcript}`;
-}
+  {
+    /*
+     * The harder half of the same idea: no pronoun at all. Hebrew puts the
+     * subject in the verb, so "ניצחתי" is "I won" — an alias list can never
+     * catch this, only a prompt rule about first-person conjugation can.
+     */
+    transcript: 'ניצחתי עם 16, יעל שנייה עם 15, עומר שלישי',
+    expected: ['r-amit', 'r-yael', 'r-omer'],
+    expectedScores: [16, 15, null],
+    speakerId: 'r-amit',
+    note: 'First-person VERB with no pronoun (ניצחתי) must resolve to the speaker.',
+  },
+];
 
 interface Finisher {
   racerId: string;
@@ -154,7 +119,12 @@ interface Finisher {
   gameScore: number | null;
 }
 
-async function extract(transcript: string, apiKey: string, model: string): Promise<Finisher[]> {
+async function extract(
+  transcript: string,
+  apiKey: string,
+  model: string,
+  speakerId?: string,
+): Promise<Finisher[]> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
@@ -171,12 +141,16 @@ async function extract(transcript: string, apiKey: string, model: string): Promi
         // should give the same verdict rather than a different roll.
         temperature: 0,
         messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: buildUserPrompt(transcript) },
+          { role: 'system', content: systemPrompt() },
+          { role: 'user', content: userPrompt(transcript, ROSTER, speakerId) },
         ],
         response_format: {
           type: 'json_schema',
-          json_schema: { name: 'race_results', strict: true, schema: SCHEMA },
+          json_schema: {
+            name: 'race_results',
+            strict: true,
+            schema: buildSchema(ROSTER.map((r) => r.id)),
+          },
         },
       }),
     });
@@ -277,7 +251,7 @@ async function main(): Promise<void> {
   for (const [index, probe] of CASES.entries()) {
     const label = `[${index + 1}/${CASES.length}]`;
     try {
-      const finishers = await extract(probe.transcript, apiKey, model);
+      const finishers = await extract(probe.transcript, apiKey, model, probe.speakerId);
       const gotIds = finishers.map((f) => f.racerId);
       const gotScores = finishers.map((f) => f.gameScore);
 
