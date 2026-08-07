@@ -19,6 +19,7 @@ import { api } from '../lib/api';
 import { recordAudio, speechSupported, type RecordingSession } from '../lib/speech';
 import type { GameResultInput, KillEventInput, MetricDef, PublicUser } from '@scrapyard/shared';
 import { RACE_COLOR_HEX } from '../lib/raceColors';
+import { DEFAULT_SCORE_BY_PLACE, WINNER_MIN_SCORE, effectiveScore } from '../lib/scoreRules';
 import { RacerStats, statsFromUser } from './RacerStats';
 import { avatarFor } from '../lib/racerArt';
 
@@ -47,31 +48,13 @@ interface Finisher {
 /** Medal tint by finishing place (1-indexed). Beyond the podium goes faint. */
 const PLACE_COLOR = ['#FFB020', '#CFE3FF', '#FF8A3D', '#5b6688'];
 
-/**
- * The scoring ground rules — mirrored from the server (`ScoresService.validate`)
- * so the overlay can validate and preview them live, without waiting on a
- * round trip. Kept in sync deliberately; if the server's numbers change, these
- * must too.
+/*
+ * The scoring ground rules live in ../lib/scoreRules — shared with the admin
+ * race editor, which has to preview exactly the same adjustments. `effectiveScore`
+ * is what a box resolves to when SAVED; it is deliberately not what validation
+ * reads, because the winner floor would repair the very mistake worth catching.
+ * See `enteredScores` below.
  */
-const DEFAULT_SCORE_BY_PLACE = [15, 10, 5, 0];
-const WINNER_MIN_SCORE = 15;
-
-/**
- * What a finisher's score actually resolves to on SUBMIT: blank falls back to
- * the standard purse for that place, and the winner's purse is topped up to the
- * minimum.
- *
- * Not used for validation — see `enteredScores`. The top-up would hide the
- * mistake being validated for, so by the time this runs the grid has already
- * been proven clean and the floor only ever applies to a blank box. The server
- * applies the same floor independently (ScoresService.validate).
- */
-function effectiveScore(raw: string, place: number): number {
-  const typed = raw.trim() === '' ? 0 : Math.max(0, Number(raw) || 0);
-  let score = typed === 0 ? DEFAULT_SCORE_BY_PLACE[place - 1] ?? 0 : typed;
-  if (place === 1 && score < WINNER_MIN_SCORE) score = WINNER_MIN_SCORE;
-  return score;
-}
 
 /** Matches Tailwind's `lg` breakpoint — the same one the rest of the app treats as "desktop". */
 const DESKTOP_QUERY = '(min-width: 1024px)';

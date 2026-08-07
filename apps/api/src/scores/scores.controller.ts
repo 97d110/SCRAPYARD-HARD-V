@@ -6,6 +6,7 @@ import {
   Get,
   HttpCode,
   Param,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -38,6 +39,7 @@ import type {
   PublicUser,
   RecordGameResponse,
   Scoreboard,
+  UpdateGameResponse,
 } from '@scrapyard/shared';
 import { dayKey, monthKey, periodKindOf } from '../common/period.util';
 
@@ -63,6 +65,32 @@ export class KillEventDto {
 
   @IsString() @MinLength(1) @MaxLength(128)
   victimId!: string;
+}
+
+/**
+ * One row of an admin correction. No `stats` and no optional `gameScore`:
+ * an edit restates a finishing order the admin is looking at, so every row
+ * carries a number rather than relying on a server-side default meant for a
+ * blank field in the recording form.
+ */
+export class GameResultPatchDto {
+  @IsString() @MinLength(1) @MaxLength(128)
+  racerId!: string;
+
+  @IsInt() @Min(1) @Max(4)
+  place!: number;
+
+  @IsInt() @Min(0) @Max(999)
+  gameScore!: number;
+}
+
+export class UpdateGameDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(4)
+  @ValidateNested({ each: true })
+  @Type(() => GameResultPatchDto)
+  results!: GameResultPatchDto[];
 }
 
 export class RecordGameDto {
@@ -202,6 +230,36 @@ export class AdminGamesController {
       before,
       day,
     });
+  }
+
+  /**
+   * Correct today's race — finishing order and in-game scores.
+   *
+   * Not `@Put`: this replaces the results array but deliberately cannot touch
+   * the kill log, the timestamp, the note or who recorded it, so it is a partial
+   * update of the document and says so. Restricted to today server-side, so a
+   * stale tab can't rewrite a settled day. See `ScoresService.updateGame`.
+   */
+  @Patch(':id')
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateGameDto,
+    @ClientId() origin?: string,
+  ): Promise<UpdateGameResponse> {
+    const result = await this.scores.updateGame(id, dto.results);
+    /*
+     * Broadcast without suppressing the editing tab's own echo: the response
+     * carries the corrected race but no boards, and a placement change moves
+     * every leaderboard plus any open profile. Same reasoning as delete — see
+     * SELF_APPLIED in apps/web/src/lib/live.ts.
+     */
+    this.live.broadcast({
+      type: 'game:updated',
+      origin,
+      gameId: result.game.id,
+      dayKey: result.game.dayKey,
+    });
+    return result;
   }
 
   /**

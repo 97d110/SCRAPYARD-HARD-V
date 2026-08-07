@@ -112,6 +112,33 @@ export interface GameResultInput {
   stats?: Record<string, number>;
 }
 
+/**
+ * One row of an admin correction to an already-recorded race.
+ *
+ * Deliberately narrower than `GameResultInput`: the racer set is fixed and
+ * `stats` is absent. An edit fixes a finishing order or a mistyped score, and
+ * the captured stats — kills and deaths above all — are derived from the kill
+ * log, which an edit does not touch. Letting a correction carry stats would be
+ * offering to overwrite a derived value with a typed one.
+ */
+export interface GameResultPatch {
+  racerId: string;
+  place: number;
+  gameScore: number;
+}
+
+/**
+ * Response from PATCH /api/admin/games/:id — the race as it now stands.
+ *
+ * No `recomputedGames` counterpart to `DeleteGameResponse`, because there is
+ * nothing to recompute. Revenge tags depend only on the kill log and its
+ * chronological order, and an edit changes neither, so the cascade that a
+ * delete needs does not arise here.
+ */
+export interface UpdateGameResponse {
+  game: GameEntry;
+}
+
 /** A "who got whom" the client sends when recording a race. */
 export interface KillEventInput {
   killerId: string;
@@ -529,6 +556,7 @@ export interface ExportSummary {
  */
 export type LiveEventType =
   | 'game:recorded'
+  | 'game:updated'
   | 'game:deleted'
   | 'roster:changed'
   | 'puns:changed'
@@ -567,6 +595,18 @@ export interface GameRecordedEvent extends LiveEventBase {
   };
 }
 
+/**
+ * An admin corrected a race's finishing order or scores.
+ *
+ * Carries no winner block, unlike `game:recorded` — a correction must not fire
+ * the celebration flyby a second time, even when it changes who won.
+ */
+export interface GameUpdatedEvent extends LiveEventBase {
+  type: 'game:updated';
+  gameId: string;
+  dayKey: string;
+}
+
 export interface GameDeletedEvent extends LiveEventBase {
   type: 'game:deleted';
   gameId: string;
@@ -602,6 +642,7 @@ export interface AchievementRulesChangedEvent extends LiveEventBase {
 
 export type LiveEvent =
   | GameRecordedEvent
+  | GameUpdatedEvent
   | GameDeletedEvent
   | RosterChangedEvent
   | PunsChangedEvent

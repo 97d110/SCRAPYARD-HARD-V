@@ -80,7 +80,14 @@ export function UserPage() {
    * all.
    */
   useLiveEvent(
-    ['game:recorded', 'game:deleted', 'roster:changed', 'metrics:changed', 'achievement-rules:changed'],
+    [
+      'game:recorded',
+      'game:updated',
+      'game:deleted',
+      'roster:changed',
+      'metrics:changed',
+      'achievement-rules:changed',
+    ],
     refresh,
   );
 

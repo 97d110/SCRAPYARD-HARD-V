@@ -5,9 +5,11 @@ import type {
   ContentTypeDescriptor,
   CurrentBoards,
   DeleteGameResponse,
+  UpdateGameResponse,
   ExportSummary,
   FormulaTerm,
   GameResultInput,
+  GameResultPatch,
   GamesPage,
   KillEventInput,
   MetricAggregation,
@@ -247,6 +249,18 @@ export const api = {
         const suffix = query.toString() ? `?${query.toString()}` : '';
         return request<GamesPage>(`/admin/games${suffix}`);
       },
+      /**
+       * Corrects the finishing order and scores of one of today's races.
+       *
+       * Rejected server-side for any race that isn't from today, and for any
+       * change to which racers took part — the same racers, reordered and
+       * rescored, is the whole contract.
+       */
+      update: (id: string, results: GameResultPatch[]) =>
+        request<UpdateGameResponse>(`/admin/games/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ results }),
+        }),
       /** Deletes the game and recomputes same-day revenge tags server-side. */
       remove: (id: string) =>
         request<DeleteGameResponse>(`/admin/games/${encodeURIComponent(id)}`, {

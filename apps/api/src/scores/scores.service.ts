@@ -8,10 +8,12 @@ import type {
   DeleteGameResponse,
   GameEntry,
   GameResultInput,
+  GameResultPatch,
   GamesPage,
   KillEventInput,
   PeriodKind,
   Scoreboard,
+  UpdateGameResponse,
   UserRecord,
 } from '@scrapyard/shared';
 import { dayKey, monthKey } from '../common/period.util';
@@ -145,21 +147,7 @@ export class ScoresService {
    * restricted to known metrics.
    */
   private async validate(input: GameResultInput[]): Promise<GameResultDoc[]> {
-    // A winner alone is enough — everything past first place is optional.
-    if (!Array.isArray(input) || input.length < 1 || input.length > MAX_FIELD) {
-      throw new BadRequestException(`A race needs 1–${MAX_FIELD} finishers`);
-    }
-
-    const racerIds = input.map((r) => r.racerId);
-    if (new Set(racerIds).size !== racerIds.length) {
-      throw new BadRequestException('A racer can only appear once in a race');
-    }
-
-    const places = input.map((r) => r.place).sort((a, b) => a - b);
-    const expected = input.map((_, i) => i + 1);
-    if (places.some((p, i) => p !== expected[i])) {
-      throw new BadRequestException(`Places must be 1…${input.length} with no gaps or ties`);
-    }
+    this.assertCleanRanking(input);
 
     // Every racer must exist. requireRaw throws 404 before anything is written.
     await Promise.all(input.map((r) => this.users.requireRaw(r.racerId)));
@@ -168,10 +156,6 @@ export class ScoresService {
 
     const results = input
       .map((r) => {
-        let gameScore = this.clampInt(r.gameScore ?? 0, 0, MAX_SCORE, 'in-game score');
-        if (gameScore === 0) gameScore = DEFAULT_SCORE_BY_PLACE[r.place] ?? 0;
-        if (r.place === 1 && gameScore < WINNER_MIN_SCORE) gameScore = WINNER_MIN_SCORE;
-
         const stats: Record<string, number> = {};
         for (const [key, raw] of Object.entries(r.stats ?? {})) {
           // Silently drop unknown metrics so an evolving metric list never
@@ -179,11 +163,58 @@ export class ScoresService {
           if (!capturedIds.has(key)) continue;
           stats[key] = this.clampInt(raw, 0, MAX_STAT, `stat '${key}'`);
         }
-        return { racerId: r.racerId, place: r.place, gameScore, stats };
+        return {
+          racerId: r.racerId,
+          place: r.place,
+          gameScore: this.settleScore(r.place, r.gameScore),
+          stats,
+        };
       })
       .sort((a, b) => a.place - b.place);
 
-    // Scores must not climb back up further down the running order.
+    this.assertScoreOrder(results);
+    return results;
+  }
+
+  /*
+   * The three rules below are extracted rather than inlined because
+   * `updateGame` has to apply exactly the same ones. An admin correction that
+   * accepted a ranking `recordGame` would have rejected — a tie, a 15-point
+   * gap between first and second inverted, a winner dropped below the floor —
+   * would let the edit path write documents the insert path considers
+   * impossible, and every aggregation downstream assumes the insert path's
+   * guarantees. One copy, two callers.
+   */
+
+  /** 1…N finishers, each racer once, places a gapless 1…N with no ties. */
+  private assertCleanRanking(rows: Array<{ racerId: string; place: number }>): void {
+    // A winner alone is enough — everything past first place is optional.
+    if (!Array.isArray(rows) || rows.length < 1 || rows.length > MAX_FIELD) {
+      throw new BadRequestException(`A race needs 1–${MAX_FIELD} finishers`);
+    }
+
+    const racerIds = rows.map((r) => r.racerId);
+    if (new Set(racerIds).size !== racerIds.length) {
+      throw new BadRequestException('A racer can only appear once in a race');
+    }
+
+    const places = rows.map((r) => r.place).sort((a, b) => a - b);
+    const expected = rows.map((_, i) => i + 1);
+    if (places.some((p, i) => p !== expected[i])) {
+      throw new BadRequestException(`Places must be 1…${rows.length} with no gaps or ties`);
+    }
+  }
+
+  /** Blank/zero falls back to the standard purse; the winner never drops below the floor. */
+  private settleScore(place: number, raw: number | undefined): number {
+    let gameScore = this.clampInt(raw ?? 0, 0, MAX_SCORE, 'in-game score');
+    if (gameScore === 0) gameScore = DEFAULT_SCORE_BY_PLACE[place] ?? 0;
+    if (place === 1 && gameScore < WINNER_MIN_SCORE) gameScore = WINNER_MIN_SCORE;
+    return gameScore;
+  }
+
+  /** Scores must not climb back up further down the running order. Expects place order. */
+  private assertScoreOrder(results: Array<{ place: number; gameScore: number }>): void {
     for (let i = 1; i < results.length; i += 1) {
       if (results[i].gameScore > results[i - 1].gameScore) {
         throw new BadRequestException(
@@ -191,8 +222,6 @@ export class ScoresService {
         );
       }
     }
-
-    return results;
   }
 
   /**
@@ -277,6 +306,90 @@ export class ScoresService {
     const nextBefore = docs.length > limit ? page[page.length - 1].at.toISOString() : undefined;
 
     return { games: page.map((doc) => this.toEntry(doc)), ...(nextBefore ? { nextBefore } : {}) };
+  }
+
+  /**
+   * Correct today's race: finishing order and in-game scores, nothing else.
+   *
+   * ── Why this needs no cascade, when delete does ────────────────────────────
+   *
+   * Boards, achievements and metrics are aggregated fresh from `games` on every
+   * read, so a corrected placement is reflected on the next load with no
+   * derived state to fix up. The one write-time-resolved thing in the whole
+   * model is the kill log's `revenge` flag — and it depends only on the day's
+   * kill pairs and their chronological order, neither of which an edit touches.
+   * `events` and `at` are left exactly as recorded, so the day's grudge ledger
+   * replays identically and there is nothing to recompute.
+   *
+   * That is a property of this edit being narrow, not a general fact. Anything
+   * that let an edit change the kill log, or move `at`, would need
+   * `deleteGame`'s day replay.
+   *
+   * ── Why today only ─────────────────────────────────────────────────────────
+   *
+   * Editing is for fixing a race that was just typed in wrong, while the crew
+   * is still in the room to agree what happened. Past days are settled: an
+   * admin tab left open overnight should not be able to rewrite them, and
+   * "which month's leaderboard did that change?" is not a question anyone
+   * should have to ask. Deleting stays unrestricted — removing a race that
+   * plainly should not exist is a different kind of act from restating one.
+   */
+  async updateGame(id: string, patch: GameResultPatch[]): Promise<UpdateGameResponse> {
+    const games = await this.mongo.games();
+    const game = await games.findOne({ _id: id });
+    if (!game) throw new NotFoundException('No such game');
+
+    const today = dayKey();
+    if (game.dayKey !== today) {
+      throw new BadRequestException(
+        `Only today's races can be edited — that one is from ${game.dayKey}`,
+      );
+    }
+
+    /*
+     * The field is fixed. Swapping a racer in or out would invalidate the kill
+     * log against them, which this endpoint does not accept and therefore
+     * cannot re-validate — so it is refused outright rather than silently
+     * writing a race whose kills reference someone who was not in it.
+     */
+    const was = new Set(game.results.map((r) => r.racerId));
+    const now = new Set(patch.map((r) => r.racerId));
+    if (was.size !== now.size || [...now].some((racerId) => !was.has(racerId))) {
+      throw new BadRequestException(
+        'An edit can reorder and rescore the same racers, not change who raced',
+      );
+    }
+
+    this.assertCleanRanking(patch);
+
+    /*
+     * Stats ride along from the existing document untouched. kills/deaths are
+     * derived from the kill log at record time and the log is not editable
+     * here, so re-deriving would produce the same numbers, and accepting them
+     * from the client would let a correction overwrite a derived value.
+     */
+    const statsByRacer = new Map(game.results.map((r) => [r.racerId, r.stats]));
+    const results: GameResultDoc[] = patch
+      .map((r) => ({
+        racerId: r.racerId,
+        place: r.place,
+        gameScore: this.settleScore(r.place, r.gameScore),
+        stats: statsByRacer.get(r.racerId) ?? {},
+      }))
+      .sort((a, b) => a.place - b.place);
+
+    this.assertScoreOrder(results);
+
+    await games.updateOne({ _id: id }, { $set: { results } });
+
+    const before = game.results.find((r) => r.place === 1)?.racerId;
+    const after = results.find((r) => r.place === 1)!.racerId;
+    this.logger.log(
+      `Game ${id} edited (${game.dayKey}, ${results.length} finishers)` +
+        (before !== after ? ` — winner changed ${before} → ${after}` : ''),
+    );
+
+    return { game: this.toEntry({ ...game, results }) };
   }
 
   /**

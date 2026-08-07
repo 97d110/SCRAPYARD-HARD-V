@@ -332,6 +332,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
             );
             break;
 
+          /*
+           * Both move the same things a recorded race does, minus the
+           * celebration: an edited placement changes wins, points and podiums
+           * exactly as a new race would, so the boards and the roster's
+           * per-racer counts both need refetching. No flyby — a correction
+           * shouldn't re-run the victory animation, even when it changes who won.
+           */
+          case 'game:updated':
           case 'game:deleted':
             scheduleRefresh(['boards', 'users']);
             break;

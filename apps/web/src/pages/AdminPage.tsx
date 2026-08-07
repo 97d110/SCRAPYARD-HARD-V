@@ -55,6 +55,7 @@ import {
   Segmented,
 } from '../components/ui/primitives';
 import { RACE_COLOR_HEX, RACE_COLORS } from '../lib/raceColors';
+import { DEFAULT_SCORE_BY_PLACE, WINNER_MIN_SCORE } from '../lib/scoreRules';
 import { RacerStats, statsFromUser } from '../components/RacerStats';
 import { avatarFor } from '../lib/racerArt';
 import type {
@@ -64,6 +65,7 @@ import type {
   ContentTypeDescriptor,
   FormulaTerm,
   GameEntry,
+  GameResultPatch,
   MetricAggregation,
   MetricDef,
   PublicUser,
@@ -121,7 +123,15 @@ export function AdminPage() {
   // Every card on this grid shows a count, and each of these events moves one
   // of them. `load` doesn't blank `types`, so this refreshes without a flicker.
   useLiveEvent(
-    ['game:recorded', 'game:deleted', 'roster:changed', 'puns:changed', 'metrics:changed', 'achievement-rules:changed'],
+    [
+      'game:recorded',
+      'game:updated',
+      'game:deleted',
+      'roster:changed',
+      'puns:changed',
+      'metrics:changed',
+      'achievement-rules:changed',
+    ],
     load,
   );
 
@@ -1722,8 +1732,173 @@ function AchievementsEditor({ onBack }: { onBack: () => void }) {
  * recomputes the rest of that day after a delete; the confirm dialog says so
  * up front rather than surprising the admin after the fact.
  */
+/**
+ * One race, opened for correction: the same racers, reordered and rescored.
+ *
+ * Places are NOT an input. They're the row order, so 1…N with no gaps or ties
+ * holds by construction and the server's ranking check can't be tripped from
+ * here at all. Only the scores are typed, and only they can be wrong.
+ */
+function RaceCorrection({
+  game,
+  label,
+  accent,
+  onCancel,
+  onSave,
+  busy,
+}: {
+  game: GameEntry;
+  label: (racerId: string) => string;
+  accent: (racerId: string) => string;
+  onCancel: () => void;
+  onSave: (results: GameResultPatch[]) => void;
+  busy: boolean;
+}) {
+  /** Finishers in place order; the array index IS the place from here on. */
+  const [rows, setRows] = useState(() =>
+    [...game.results]
+      .sort((a, b) => a.place - b.place)
+      .map((r) => ({ racerId: r.racerId, score: String(r.gameScore) })),
+  );
+
+  const move = (from: number, to: number) => {
+    if (to < 0 || to >= rows.length) return;
+    setRows((current) => {
+      const next = [...current];
+      const [row] = next.splice(from, 1);
+      next.splice(to, 0, row);
+      return next;
+    });
+  };
+
+  const setScore = (index: number, value: string) =>
+    setRows((current) => current.map((row, i) => (i === index ? { ...row, score: value } : row)));
+
+  /*
+   * Mirrors the server's `settleScore`: a blank or zero falls back to the purse
+   * for that place, and the winner is floored at 15. Shown rather than silently
+   * applied on save, so an admin who types 0 isn't surprised by a 10 appearing.
+   */
+  const settled = rows.map((row, i) => {
+    const place = i + 1;
+    const typed = Number(row.score);
+    const raw = row.score.trim() === '' || !Number.isFinite(typed) ? 0 : Math.round(typed);
+    let score = raw === 0 ? (DEFAULT_SCORE_BY_PLACE[place - 1] ?? 0) : raw;
+    if (place === 1 && score < WINNER_MIN_SCORE) score = WINNER_MIN_SCORE;
+    return { ...row, place, typed: raw, score, adjusted: score !== raw };
+  });
+
+  // The one rule row order can't enforce: a score must not beat the one above it.
+  const firstClimb = settled.findIndex((row, i) => i > 0 && row.score > settled[i - 1].score);
+  const problem =
+    firstClimb > 0
+      ? `Place ${firstClimb + 1}'s score can't beat place ${firstClimb}'s.`
+      : settled.some((row) => row.score > 999)
+        ? 'Scores top out at 999.'
+        : null;
+
+  const unchanged = settled.every((row, i) => {
+    const before = [...game.results].sort((a, b) => a.place - b.place)[i];
+    return before?.racerId === row.racerId && before?.gameScore === row.score;
+  });
+
+  return (
+    /* `w-full` inside the row's flex-wrap is what drops this onto its own line;
+       the negative margins undo the row's padding so it spans the full panel. */
+    <div className="-mx-4 -mb-3 mt-1 w-full border-t border-hairline/60 bg-white/[0.02] px-4 py-4">
+      <Label className="mb-3">Correct this race</Label>
+
+      <div className="space-y-2">
+        {settled.map((row, i) => (
+          <div key={row.racerId} className="flex items-center gap-2">
+            <span className="w-7 shrink-0 font-display text-[0.7rem] font-black text-[var(--text-faint)]">
+              P{row.place}
+            </span>
+
+            <span
+              className="min-w-0 flex-1 truncate text-[0.8rem] font-semibold"
+              style={{ color: accent(row.racerId) }}
+            >
+              {label(row.racerId)}
+            </span>
+
+            <span className="flex shrink-0 items-center gap-1">
+              <button
+                className="border border-hairline p-1 text-[var(--text-dim)] transition hover:border-white/25 hover:text-white disabled:opacity-25"
+                disabled={i === 0 || busy}
+                onClick={() => move(i, i - 1)}
+                aria-label={`Move ${label(row.racerId)} up`}
+              >
+                <ChevronUp size={13} />
+              </button>
+              <button
+                className="border border-hairline p-1 text-[var(--text-dim)] transition hover:border-white/25 hover:text-white disabled:opacity-25"
+                disabled={i === settled.length - 1 || busy}
+                onClick={() => move(i, i + 1)}
+                aria-label={`Move ${label(row.racerId)} down`}
+              >
+                <ChevronDown size={13} />
+              </button>
+            </span>
+
+            <input
+              type="number"
+              min={0}
+              max={999}
+              inputMode="numeric"
+              className="field w-20 shrink-0 text-center font-mono text-[0.78rem]"
+              value={row.score}
+              disabled={busy}
+              onChange={(event) => setScore(i, event.target.value)}
+              aria-label={`${label(row.racerId)} score`}
+            />
+
+            <span className="w-24 shrink-0 font-mono text-[0.6rem] text-[var(--text-faint)]">
+              {row.adjusted ? `→ ${row.score}` : ''}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {problem && (
+        <p className="mt-3 border border-danger/40 bg-danger/10 px-3 py-2 text-[0.7rem] text-danger">
+          {problem}
+        </p>
+      )}
+      {!problem && settled.some((row) => row.adjusted) && (
+        <p className="mt-3 text-[0.68rem] text-[var(--text-faint)]">
+          A blank or zero takes the standard purse for that place, and the winner never
+          drops below {WINNER_MIN_SCORE} — the arrows show what will be saved.
+        </p>
+      )}
+
+      <div className="mt-4 flex items-center gap-2">
+        <NeonButton
+          variant="primary"
+          accent={ACCENTS.games}
+          disabled={busy || !!problem || unchanged}
+          onClick={() =>
+            onSave(
+              settled.map((row) => ({
+                racerId: row.racerId,
+                place: row.place,
+                gameScore: row.score,
+              })),
+            )
+          }
+        >
+          {busy ? 'Saving…' : unchanged ? 'No changes' : 'Save correction'}
+        </NeonButton>
+        <NeonButton variant="ghost" disabled={busy} onClick={onCancel}>
+          Cancel
+        </NeonButton>
+      </div>
+    </div>
+  );
+}
+
 function GamesEditor({ onBack }: { onBack: () => void }) {
-  const { users } = useApp();
+  const { users, boards } = useApp();
   const [games, setGames] = useState<GameEntry[] | null>(null);
   const [nextBefore, setNextBefore] = useState<string | undefined>(undefined);
   const [day, setDay] = useState('');
@@ -1736,6 +1911,8 @@ function GamesEditor({ onBack }: { onBack: () => void }) {
 
   const [pagedDeeper, setPagedDeeper] = useState(false);
   const [stale, setStale] = useState(false);
+  /** Which race is open for correction, if any. */
+  const [editing, setEditing] = useState<string | null>(null);
 
   const load = useCallback(async (scope: string) => {
     setError(null);
@@ -1772,7 +1949,7 @@ function GamesEditor({ onBack }: { onBack: () => void }) {
    * silently collapsing them back to page one mid-triage would be worse than
    * being briefly out of date: say so and let them choose.
    */
-  useLiveEvent(['game:recorded', 'game:deleted'], () => {
+  useLiveEvent(['game:recorded', 'game:updated', 'game:deleted'], () => {
     if (pagedDeeper) {
       setStale(true);
       return;
@@ -1792,6 +1969,33 @@ function GamesEditor({ onBack }: { onBack: () => void }) {
       setError(caught instanceof Error ? caught.message : 'Could not load more races');
     } finally {
       setLoadingMore(false);
+    }
+  };
+
+  /*
+   * The server's day key, not the browser's. Period maths runs in one
+   * configured timezone (SCRAPYARD_TIMEZONE, UTC by default) so that "today"
+   * means the same thing for everyone on the team — a `new Date()` here would
+   * disagree with the server's edit window for anyone not sitting in that zone,
+   * offering an Edit button that then 400s. This value also rolls over midnight
+   * on a long-lived tab, because every board refresh carries it.
+   */
+  const serverToday = boards?.periods.day ?? '';
+
+  const save = async (id: string, results: GameResultPatch[]) => {
+    setBusy(true);
+    setError(null);
+    setLastResult(null);
+    try {
+      await api.admin.games.update(id, results);
+      setEditing(null);
+      setLastResult('Race corrected. Every board picks it up on its next load.');
+      await load(day);
+      window.setTimeout(() => setLastResult(null), 6000);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not save that correction');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -1903,6 +2107,8 @@ function GamesEditor({ onBack }: { onBack: () => void }) {
           <Panel accent={ACCENTS.games} className="divide-y divide-hairline/60 overflow-hidden">
             {games.map((game) => {
               const revenges = game.events.filter((e) => e.revenge).length;
+              const editable = game.dayKey === serverToday;
+              const open = editing === game.id;
               return (
                 <div key={game.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
                   <span className="w-[8.5rem] shrink-0 font-mono text-[0.68rem] text-[var(--text-faint)]">
@@ -1932,6 +2138,23 @@ function GamesEditor({ onBack }: { onBack: () => void }) {
                     {revenges > 0 ? ` · ${revenges} revenge` : ''}
                   </span>
 
+                  {/* Only today's races. The server refuses the rest, so
+                      offering the button would only produce a 400. */}
+                  {editable && (
+                    <button
+                      className={`shrink-0 p-1.5 transition hover:scale-110 disabled:opacity-30 ${
+                        open ? 'text-plasma' : 'text-[var(--text-dim)] hover:text-plasma'
+                      }`}
+                      disabled={busy}
+                      onClick={() => setEditing(open ? null : game.id)}
+                      aria-label={open ? 'Close correction' : 'Correct race'}
+                      aria-expanded={open}
+                      title="Correct the finishing order or scores"
+                    >
+                      <Pencil size={15} />
+                    </button>
+                  )}
+
                   <button
                     className="shrink-0 p-1.5 text-[var(--text-dim)] transition hover:scale-110 hover:text-danger disabled:opacity-30"
                     disabled={busy}
@@ -1941,6 +2164,24 @@ function GamesEditor({ onBack }: { onBack: () => void }) {
                   >
                     <Trash2 size={15} />
                   </button>
+
+                  {open && (
+                    /*
+                     * Keyed on the game AND its current results, so saving —
+                     * which reloads the log — rebuilds the editor from what was
+                     * actually stored rather than leaving the pre-save draft on
+                     * screen. Cheap way to keep the form honest about the server.
+                     */
+                    <RaceCorrection
+                      key={`${game.id}:${game.results.map((r) => `${r.racerId}@${r.place}=${r.gameScore}`).join(',')}`}
+                      game={game}
+                      label={finisherLabel}
+                      accent={finisherAccent}
+                      busy={busy}
+                      onCancel={() => setEditing(null)}
+                      onSave={(results) => void save(game.id, results)}
+                    />
+                  )}
                 </div>
               );
             })}
