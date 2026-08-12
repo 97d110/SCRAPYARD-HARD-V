@@ -680,7 +680,41 @@ async function main(): Promise<void> {
     }
     const authed = await fetch(`${url}/`, { headers: { Cookie: `${SESSION_COOKIE}=${issued}` } });
     check('authenticated / serves the app', authed.status === 200);
-    check('authenticated / includes the bundle', /\/assets\/index-[\w-]+\.js/.test(await authed.text()));
+    const shell = await authed.text();
+    check('authenticated / includes the bundle', /\/assets\/index-[\w-]+\.js/.test(shell));
+
+    /*
+     * Nothing behind the gate may be marked `public`.
+     *
+     * This is a regression test for a real incident, and the reason it is
+     * worth a check rather than a comment: the bug is invisible locally.
+     * Nothing here caches, so a `public` header behaves identically to a
+     * `private` one — right up until a CDN sits in front, stores one racer's
+     * authenticated bundle, and serves it to anonymous callers without the
+     * gate ever running. The header is the only place the mistake is visible,
+     * so the header is what gets asserted.
+     */
+    const bundlePath = (shell.match(/\/assets\/index-[\w-]+\.js/) ?? [])[0];
+    if (bundlePath) {
+      const assetRes = await fetch(`${url}${bundlePath}`, {
+        headers: { Cookie: `${SESSION_COOKIE}=${issued}` },
+      });
+      const cache = assetRes.headers.get('cache-control') ?? '';
+      check('the bundle is served to a session', assetRes.status === 200, assetRes.status);
+      check(
+        'the bundle is never marked public — a shared cache would bypass the gate',
+        cache.includes('private') && !cache.includes('public'),
+        cache,
+      );
+    }
+
+    const refused = await fetch(`${url}${bundlePath ?? '/assets/probe.js'}`);
+    check('an anonymous bundle request is refused', refused.status === 401, refused.status);
+    check(
+      'the refusal is not cacheable either',
+      (refused.headers.get('cache-control') ?? '').includes('no-store'),
+      refused.headers.get('cache-control'),
+    );
   }
 
   // --- live channel ----------------------------------------------------------

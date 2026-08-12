@@ -170,6 +170,14 @@ export function mountSpa(app: NestExpressApplication): void {
 
     if (await session.isAuthenticated(request.headers)) return next();
 
+    /*
+     * A refusal is as per-user as an acceptance. Saying so explicitly keeps a
+     * shared cache from holding on to either one and replaying it at somebody
+     * in the opposite state — a cached 401 locking out a signed-in racer is the
+     * same class of bug as a cached bundle leaking to an anonymous one.
+     */
+    response.setHeader('Cache-Control', 'private, no-store');
+
     // Asset requests (JS/CSS/map) get a bare 401 rather than an HTML redirect —
     // redirecting a script tag to a login page just yields a confusing parse
     // error in the console.
@@ -181,8 +189,28 @@ export function mountSpa(app: NestExpressApplication): void {
     response.redirect(302, '/login');
   });
 
-  // 2. The bundle. Hashed assets are immutable; index.html must never be cached
-  //    or a deploy would keep serving the old bundle references.
+  /*
+   * 2. The bundle.
+   *
+   * ── `private` is doing security work here, not performance work ───────────
+   *
+   * Everything this handler serves has already passed the session gate above,
+   * which means every response is the answer to *who asked*. A CDN sits in
+   * front of this in the deployed shape, and a shared cache does not know that:
+   * `public` invites it to store one racer's authenticated response and hand it
+   * to the next anonymous request without ever consulting the function.
+   *
+   * That is not theoretical — it is exactly what happened. The first deploy
+   * used `public, max-age=31536000, immutable` (correct on a host with no CDN
+   * in front, which is where this code came from) and the JS bundle started
+   * returning 200 to anonymous callers with `x-vercel-cache: HIT`, with the
+   * gate never running. `private` forbids shared caches while still letting the
+   * *browser* keep the file for a year, so the caching intent survives intact.
+   *
+   * It is applied to every gated response rather than only the hashed assets:
+   * anything served from behind the gate is per-user by definition, and relying
+   * on "no Cache-Control means no caching" is a weaker guarantee than saying so.
+   */
   app.use((request: Request, response: Response, next: NextFunction) => {
     if (request.method !== 'GET' && request.method !== 'HEAD') return next();
 
@@ -193,14 +221,15 @@ export function mountSpa(app: NestExpressApplication): void {
     // it is the one file whose caching must not be left to chance.
     if (file === indexHtml) return next();
 
+    // Hashed filenames change on every build, so a year is safe — but only in
+    // the browser that fetched it.
     const isHashedAsset = file.startsWith(path.join(webDist, 'assets') + path.sep);
 
-    sendIfFile(
-      response,
-      next,
-      file,
-      isHashedAsset ? { 'Cache-Control': 'public, max-age=31536000, immutable' } : undefined,
-    );
+    sendIfFile(response, next, file, {
+      'Cache-Control': isHashedAsset
+        ? 'private, max-age=31536000, immutable'
+        : 'private, no-cache',
+    });
   });
 
   // 3. SPA fallback — client-side routes like /racers and /admin must all
@@ -209,7 +238,7 @@ export function mountSpa(app: NestExpressApplication): void {
     if (request.method !== 'GET' && request.method !== 'HEAD') return next();
     if (isOpenPath(request.originalUrl)) return next();
 
-    response.setHeader('Cache-Control', 'no-store, must-revalidate');
+    response.setHeader('Cache-Control', 'private, no-store, must-revalidate');
     response.sendFile(indexHtml);
   });
 
