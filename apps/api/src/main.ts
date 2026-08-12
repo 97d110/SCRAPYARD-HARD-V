@@ -1,106 +1,26 @@
-import 'reflect-metadata';
-import { Logger, RequestMethod, ValidationPipe } from '@nestjs/common';
-import { NestFactory } from '@nestjs/core';
-import { NestExpressApplication } from '@nestjs/platform-express';
-import cookieParser from 'cookie-parser';
-import express from 'express';
-import { AppModule } from './app.module';
+import { Logger } from '@nestjs/common';
+import { createApp } from './app.factory';
 import { LIVE_PATH } from './live/live.constants';
-import { mountLoginAssets, mountSpa } from './web/serve-spa';
 
+/**
+ * Run Scrapyard as its own process, listening on a port.
+ *
+ * This is the local path — `npm run dev`, `npm start`, `npm run preview` — and
+ * the one to use on any host that runs a container. The deployed shape on
+ * Vercel does not come through here at all: the app is a function there, and
+ * `server.js` at the repo root is its entrypoint. Everything the two have in
+ * common lives in `createApp`.
+ */
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Scrapyard');
 
-  // We supply our own body parser because profile avatars may be posted as
-  // inline data URLs, which blow past Express's default 100kb limit.
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-    bodyParser: false,
-  });
-
-  app.use(express.json({ limit: '2mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '2mb' }));
-  app.use(cookieParser());
-
-  /*
-   * Everything is under /api except the login page, which is a user-facing
-   * document rather than an endpoint.
-   */
-  app.setGlobalPrefix('api', {
-    exclude: [{ path: 'login', method: RequestMethod.GET }],
-  });
-
-  /*
-   * Login page assets (the background video, its poster) must be reachable
-   * *before* the session gate — they're part of the wall itself.
-   */
-  mountLoginAssets(app);
-
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-    }),
-  );
-
-  /*
-   * Behind a TLS terminator (Fly, Render, Railway, Cloud Run, an ALB) the hop to
-   * this process is plain HTTP. Trusting the forwarding headers is what makes
-   * request.protocol and request.ip reflect what the browser actually did.
-   *
-   * Off by default: blindly trusting X-Forwarded-* when nothing sits in front
-   * would let a client spoof its own IP.
-   */
-  const trustProxy = process.env.TRUST_PROXY?.trim();
-  if (trustProxy && trustProxy !== 'false') {
-    /*
-     * Three accepted shapes, and the order matters. Express hands any *other*
-     * string to proxy-addr, which parses it as a list of IPs or subnets and
-     * throws on anything else — so 'true' must be converted to a real boolean
-     * rather than passed through. Render sets this from render.yaml, where
-     * every value arrives as a string.
-     */
-    const value: boolean | number | string =
-      trustProxy === 'true' ? true : /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy;
-    app.set('trust proxy', value);
-    logger.log(`Trusting proxy headers: ${trustProxy}`);
-  }
-
-  /*
-   * CORS is only meaningful when the app is served from a *different* origin
-   * than this API. In the single-container deployment it isn't — Nest serves the
-   * bundle itself — so leaving WEB_ORIGIN empty disables cross-origin access
-   * entirely rather than quietly allowing a stale localhost:5173.
-   */
-  const origins = (process.env.WEB_ORIGIN ?? '')
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean);
-
-  if (origins.length > 0) {
-    app.enableCors({
-      origin: origins,
-      credentials: true,
-      // Lets a cross-origin fetch() read the suggested zip filename back off the
-      // database-export response.
-      exposedHeaders: ['X-Scrapyard-Filename'],
-    });
-  }
-
-  /*
-   * The built React app, gated on a valid session. Mounted last so the API
-   * routes and /login are matched first. When no bundle is present (development)
-   * this is a no-op and Vite hosts the app instead.
-   */
-  mountSpa(app);
+  const app = await createApp();
 
   /*
    * Without this, Nest's onApplicationShutdown/onModuleDestroy hooks never run:
-   * the process takes SIGTERM and exits with them unfired. Two things depend on
-   * them — LiveGateway closing every socket, and MongoService closing the client
-   * so a deploy doesn't leave Atlas holding a pool it will only reap on its own
-   * schedule. Render sends SIGTERM on every deploy and every spin-down, so this
-   * fires several times a day.
+   * the process takes SIGTERM and exits with them unfired. MongoService closing
+   * its client depends on it, so a restart doesn't leave Atlas holding a pool it
+   * will only reap on its own schedule.
    */
   app.enableShutdownHooks();
 
@@ -109,11 +29,13 @@ async function bootstrap(): Promise<void> {
    *
    * Nest's hook awaits `app.close()`, which awaits `server.close()`, which by
    * design waits for every open connection to end. A browser sitting on the
-   * leaderboard holds an idle keep-alive connection and a live WebSocket, so it
-   * waits forever: the process hangs until Render gives up and SIGKILLs it, and
-   * every deploy pays that in downtime. Dropping the connections ourselves is
-   * the missing half — clients see the socket close and reconnect to the new
-   * instance, which is what they'd do anyway.
+   * leaderboard holds an idle keep-alive connection, so it waits: the process
+   * hangs until the supervisor gives up and SIGKILLs it. Dropping the
+   * connections ourselves is the missing half.
+   *
+   * This used to matter far more, when a live WebSocket per tab meant the wait
+   * was unbounded rather than merely a keep-alive timeout. Polling removed that,
+   * but a clean exit is still worth the four lines.
    *
    * Registered before enableShutdownHooks' own handler gets to close(), and
    * `once` so a second SIGTERM still falls through to the default behaviour.
@@ -131,9 +53,14 @@ async function bootstrap(): Promise<void> {
   // stating it means a container can never end up loopback-only and unreachable.
   await app.listen(port, '0.0.0.0');
 
+  const origins = (process.env.WEB_ORIGIN ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+
   logger.log(`API listening on http://localhost:${port}/api`);
   logger.log(`Login page at http://localhost:${port}/login`);
-  logger.log(`Live updates at ws://localhost:${port}${LIVE_PATH}`);
+  logger.log(`Live updates at http://localhost:${port}${LIVE_PATH}/events`);
   logger.log(
     origins.length > 0
       ? `CORS origins: ${origins.join(', ')}`
@@ -141,13 +68,13 @@ async function bootstrap(): Promise<void> {
   );
 
   /*
-   * Free Render instances have no shell, so the only way to inspect a
-   * deployment is the log stream. Run the connectivity checks at boot and put
-   * the verdict there.
+   * Connectivity checks at boot, with the verdict in the log stream.
    *
    * Deliberately after listen() and never awaited: a failing check must not
    * stop the service from serving /login, which is where the operator will be
-   * looking. PREFLIGHT=off silences it.
+   * looking. PREFLIGHT=off silences it — which is what the serverless
+   * deployment does, since there it would open a second MongoClient on every
+   * single cold start.
    */
   if (process.env.PREFLIGHT !== 'off') {
     void (async () => {

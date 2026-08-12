@@ -98,7 +98,7 @@ function checkEnvironment(): Check[] {
           name: 'env',
           status: 'fail',
           detail: `missing: ${missing.join(', ')}`,
-          hint: 'Render → your service → Environment. Blueprint values marked `sync: false` are never filled in for you.',
+          hint: 'Vercel → your project → Settings → Environment Variables. Secrets are never filled in for you.',
         },
   ];
 
@@ -128,9 +128,16 @@ function checkEnvironment(): Check[] {
         problems.push('contains whitespace');
       }
 
-      // Render tells us our own public URL. If it disagrees with the callback,
-      // the OAuth round trip will land somewhere else entirely.
-      const external = process.env.RENDER_EXTERNAL_HOSTNAME;
+      /*
+       * The platform tells us our own public URL. If it disagrees with the
+       * callback, the OAuth round trip will land somewhere else entirely.
+       *
+       * Deliberately the *production* URL and not `VERCEL_URL`: the latter is
+       * the per-deployment hostname, which differs on every single deploy and
+       * on every preview, so comparing against it would fail this check
+       * permanently for a callback that is in fact correct.
+       */
+      const external = process.env.VERCEL_PROJECT_PRODUCTION_URL;
       if (external && parsed.hostname !== external) {
         problems.push(`host is ${parsed.hostname} but this service answers on ${external}`);
       }

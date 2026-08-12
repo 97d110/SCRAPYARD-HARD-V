@@ -49,6 +49,19 @@ export class ExportService {
    * cannot switch to a JSON error body, so a mid-stream failure can only abort
    * the connection. That leaves a truncated, detectably-invalid zip rather than
    * silently-wrong data.
+   *
+   * ── The one limit worth knowing about ─────────────────────────────────────
+   *
+   * A Vercel Function's response body is capped at 4.5 MB, and streaming does
+   * not exempt it. At the time of the migration the entire database was 139 KB
+   * of BSON across every collection, which zips to a small fraction of that —
+   * so there is roughly two orders of magnitude of headroom and nothing to do
+   * about it today.
+   *
+   * If that ever stops being true, the shape that survives is writing the zip
+   * to object storage and answering with a signed URL. Note the failure would
+   * be abrupt rather than gradual: the export works, until one day it is a byte
+   * over and returns 413 with no warning.
    */
   async streamTo(response: Response, actor: PublicUser): Promise<void> {
     const archive = archiver('zip', { zlib: { level: 9 } });

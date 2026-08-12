@@ -20,7 +20,7 @@ import {
 } from 'class-validator';
 import { AdminGuard, JwtAuthGuard } from '../auth/guards';
 import { ClientId } from '../live/client-id.decorator';
-import { LiveGateway } from '../live/live.gateway';
+import { LiveService } from '../live/live.service';
 import { ContentService, ContentTypeDescriptor } from './content.service';
 import { ExportService } from '../database/export.service';
 import type { Pun } from '@scrapyard/shared';
@@ -67,7 +67,7 @@ export class AdminContentController {
     private readonly achievements: AchievementsService,
     private readonly metrics: MetricsService,
     private readonly exporter: ExportService,
-    private readonly live: LiveGateway,
+    private readonly live: LiveService,
   ) {}
 
   /** Cards for the searchable grid menu. */
@@ -111,7 +111,7 @@ export class AdminContentController {
   @Post('puns')
   async create(@Body() dto: CreatePunDto, @ClientId() origin?: string): Promise<Pun> {
     const pun = await this.content.createPun(dto.text);
-    this.live.broadcast({ type: 'puns:changed', origin });
+    await this.live.broadcast({ type: 'puns:changed', origin });
     return pun;
   }
 
@@ -122,7 +122,7 @@ export class AdminContentController {
     @ClientId() origin?: string,
   ): Promise<Pun> {
     const pun = await this.content.updatePun(id, dto);
-    this.live.broadcast({ type: 'puns:changed', origin });
+    await this.live.broadcast({ type: 'puns:changed', origin });
     return pun;
   }
 
@@ -130,13 +130,13 @@ export class AdminContentController {
   @HttpCode(204)
   async remove(@Param('id') id: string, @ClientId() origin?: string): Promise<void> {
     await this.content.deletePun(id);
-    this.live.broadcast({ type: 'puns:changed', origin });
+    await this.live.broadcast({ type: 'puns:changed', origin });
   }
 
   @Post('puns/reorder')
   async reorder(@Body() dto: ReorderPunsDto, @ClientId() origin?: string): Promise<Pun[]> {
     const puns = await this.content.reorderPuns(dto.ids);
-    this.live.broadcast({ type: 'puns:changed', origin });
+    await this.live.broadcast({ type: 'puns:changed', origin });
     return puns;
   }
 }

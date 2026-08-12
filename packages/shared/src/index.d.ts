@@ -539,8 +539,8 @@ export interface ExportSummary {
 // ─── Live updates ──────────────────────────────────────────────────────────
 
 /**
- * What the server pushes down the WebSocket at `/api/live` when the database
- * changes, so every other open tab catches up without polling.
+ * What the server records when the database changes, and every other open tab
+ * collects on its next poll of `/api/live/events`.
  *
  * ── These are notifications, not data ───────────────────────────────────────
  *
@@ -650,9 +650,13 @@ export type LiveEvent =
   | AchievementRulesChangedEvent;
 
 /**
- * The first frame on a fresh connection. Purely a handshake receipt: it proves
- * the cookie was accepted, and `serverId` changes on every boot so a client can
- * tell a dropped connection (same server) from a redeploy (new one).
+ * The frame that opens a run of polling, and any resync after it.
+ *
+ * Synthesised by the client rather than sent by the server — there is no
+ * handshake to receipt any more — but it means exactly what it used to: this
+ * tab does not know what it missed, so re-read everything. `serverId` carries
+ * the deployment id, so a value it hasn't seen before still means "a new
+ * version shipped, go look for a new bundle".
  */
 export interface LiveHelloFrame {
   type: 'live:hello';
@@ -661,8 +665,23 @@ export interface LiveHelloFrame {
   serverId: string;
 }
 
-/** An event as it goes over the wire — plus when the server sent it. */
+/** An event as it goes over the wire — plus when the server recorded it. */
 export type LiveFrame = (LiveEvent & { at: string }) | LiveHelloFrame;
+
+/**
+ * The answer to `GET /api/live/events`.
+ *
+ * `seq` is the log's current head, which the client sends back as `since` on
+ * its next poll. `resync` means the caller's position is no longer covered by
+ * the retained history — it should refetch rather than trust `events` to be the
+ * whole story.
+ */
+export interface LivePollResponse {
+  seq: number;
+  deploymentId: string;
+  resync: boolean;
+  events: Array<LiveEvent & { at: string; seq: number }>;
+}
 
 /** Response from POST /api/scores/record. */
 export interface RecordGameResponse {

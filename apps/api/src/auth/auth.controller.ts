@@ -6,7 +6,7 @@ import { AuthService } from './auth.service';
 import { allowedDomains } from './google.strategy';
 import { CurrentUser, JwtAuthGuard } from './guards';
 import { OAuthExceptionFilter } from './oauth-exception.filter';
-import { LiveGateway } from '../live/live.gateway';
+import { LiveService } from '../live/live.service';
 import type { PublicUser, UserRecord } from '@scrapyard/shared';
 
 @Controller('auth')
@@ -14,7 +14,7 @@ export class AuthController {
   constructor(
     private readonly auth: AuthService,
     private readonly config: ConfigService,
-    private readonly live: LiveGateway,
+    private readonly live: LiveService,
   ) {}
 
   /**
@@ -72,7 +72,7 @@ export class AuthController {
      * there is no client id to carry — and the newly signed-in tab is about to
      * load everything from scratch anyway.
      */
-    this.live.broadcast({ type: 'roster:changed', reason: 'login', userId: request.user.id });
+    await this.live.broadcast({ type: 'roster:changed', reason: 'login', userId: request.user.id });
 
     response.redirect(`${this.appRoot(request)}/?welcome=1`);
   }

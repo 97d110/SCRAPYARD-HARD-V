@@ -11,13 +11,17 @@
     "plain folders with their own tsconfig, joined by the `paths` mapping in",
     "tsconfig.base.json.",
     "",
-    "dependencies    = required at runtime by `node apps/api/dist/main.js`.",
+    "dependencies    = required at runtime by the built server.",
     "devDependencies = everything else, including react and vite — Vite bundles",
     "                  them into the client asset at build time and Node never",
-    "                  requires them. Render runs `npm ci` then prunes with this.",
+    "                  requires them. The build installs both, then only",
+    "                  `dependencies` is traced into the deployed function.",
     "",
     "ts-node, not tsx/esbuild: Nest's DI reads constructor parameter types from",
-    "`emitDecoratorMetadata`, which esbuild cannot emit."
+    "`emitDecoratorMetadata`, which esbuild cannot emit. The same rule is why",
+    "`server.js` — the Vercel entrypoint — is plain JavaScript that requires",
+    "the `tsc` output: Vercel compiles a TypeScript entrypoint with esbuild, so",
+    "a .ts one would build fine and then fail with every provider undefined."
   ],
   "scripts": {
     "dev": "npm-run-all --parallel dev:api dev:web",
@@ -46,6 +50,7 @@
     "@nestjs/jwt": "^10.2.0",
     "@nestjs/passport": "^10.0.3",
     "@nestjs/platform-express": "^10.4.6",
+    "@vercel/functions": "^3.9.3",
     "archiver": "^7.0.1",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
@@ -57,8 +62,7 @@
     "passport-jwt": "^4.0.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "web-push": "^3.6.7",
-    "ws": "^8.21.1"
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@types/archiver": "^6.0.3",
@@ -70,7 +74,6 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/web-push": "^3.6.4",
-    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.3.3",
     "autoprefixer": "^10.4.20",
     "framer-motion": "^11.18.2",

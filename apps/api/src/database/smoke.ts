@@ -28,12 +28,10 @@ import { JwtService } from '@nestjs/jwt';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import { MongoClient } from 'mongodb';
-import { WebSocket } from 'ws';
 import { AppModule } from '../app.module';
 import { AuthService } from '../auth/auth.service';
 import { GoogleStrategy } from '../auth/google.strategy';
 import { SESSION_COOKIE } from '../auth/jwt.strategy';
-import { LIVE_PATH } from '../live/live.constants';
 import { UsersService } from '../users/users.service';
 import { mountLoginAssets, mountSpa } from '../web/serve-spa';
 import { dayKey, monthKey } from '../common/period.util';
@@ -686,97 +684,61 @@ async function main(): Promise<void> {
   }
 
   // --- live channel ----------------------------------------------------------
-  console.log('\nlive channel (WebSocket)');
+  console.log('\nlive channel (polling)');
   {
-    const wsBase = url.replace(/^http/, 'ws');
-    const cookie = `${SESSION_COOKIE}=${issued}`;
-
     /**
-     * Open a socket and start collecting frames. Resolves on `open`; rejects
-     * with the HTTP status when the upgrade is refused, which is what the two
-     * negative checks below assert on.
+     * Ask for everything after `since`. Omitting it is what a freshly-opened
+     * tab does, and is answered with the current cursor and a resync.
      */
-    const openSocket = (
-      target: string,
-      headers: Record<string, string>,
-    ): Promise<{ socket: WebSocket; frames: LiveFrame[] }> =>
-      new Promise((resolve, reject) => {
-        const socket = new WebSocket(target, { headers });
-        const frames: LiveFrame[] = [];
-        socket.on('message', (data) => {
-          try {
-            frames.push(JSON.parse(String(data)) as LiveFrame);
-          } catch {
-            failures.push('live channel sent a frame that was not JSON');
-          }
-        });
-        socket.on('open', () => resolve({ socket, frames }));
-        socket.on('unexpected-response', (_request, response) => {
-          socket.terminate();
-          reject(new Error(`HTTP ${response.statusCode}`));
-        });
-        socket.on('error', (error) => reject(error));
-      });
+    const poll = (since: number | undefined, token?: string) =>
+      call(
+        'GET',
+        since === undefined ? '/live/events' : `/live/events?since=${since}`,
+        token ? { token } : {},
+      );
 
-    const refusalFor = async (target: string, headers: Record<string, string>): Promise<string> => {
-      try {
-        const opened = await openSocket(target, headers);
-        opened.socket.terminate();
-        return 'opened';
-      } catch (error) {
-        return error instanceof Error ? error.message : String(error);
-      }
-    };
-
-    const findFrame = <T extends LiveFrame['type']>(
-      frames: LiveFrame[],
+    const findEvent = <T extends LiveFrame['type']>(
+      body: { events?: Array<{ type: string }> },
       type: T,
     ): Extract<LiveFrame, { type: T }> | undefined =>
-      frames.find((frame): frame is Extract<LiveFrame, { type: T }> => frame.type === type);
+      body.events?.find((event) => event.type === type) as
+        | Extract<LiveFrame, { type: T }>
+        | undefined;
 
-    /** Poll a condition rather than sleeping a fixed time — no flake, no waste. */
-    const waitFor = async (
-      predicate: () => boolean | Promise<boolean>,
-      timeoutMs = 4000,
-    ): Promise<boolean> => {
-      const deadline = Date.now() + timeoutMs;
-      for (;;) {
-        if (await predicate()) return true;
-        if (Date.now() >= deadline) return false;
-        await new Promise((resolve) => setTimeout(resolve, 25));
-      }
-    };
+    /*
+     * The gate, first. A channel anyone could read would hand every race, every
+     * racer's name and the whole roster to an unauthenticated caller — which is
+     * exactly what the WebSocket's hand-rolled upgrade check existed to
+     * prevent. As an ordinary guarded route it is the same guard as everything
+     * else, but that is worth proving rather than assuming.
+     */
+    const anonymous = await poll(undefined);
+    check('an anonymous poll is refused with 401', anonymous.status === 401, anonymous.status);
 
-    // The gate, first. A socket that anyone could open would hand every race,
-    // every racer's name and the whole roster to an unauthenticated caller.
+    const first = await poll(undefined, racerToken);
+    check('a session cookie polls successfully', first.status === 200, first.body);
     check(
-      'an anonymous upgrade is refused with 401',
-      (await refusalFor(`${wsBase}${LIVE_PATH}`, {})).includes('401'),
-      await refusalFor(`${wsBase}${LIVE_PATH}`, {}),
+      'a tab with no cursor is told to resync',
+      first.body?.resync === true,
+      first.body,
     );
     check(
-      'a cross-origin upgrade is refused with 403 even with a valid cookie',
-      (await refusalFor(`${wsBase}${LIVE_PATH}`, { Cookie: cookie, Origin: 'https://evil.example' })).includes('403'),
+      'the answer carries a deployment id for redeploy detection',
+      typeof first.body?.deploymentId === 'string',
     );
-    check(
-      'an unknown upgrade path is refused with 404',
-      (await refusalFor(`${wsBase}/api/not-a-socket`, { Cookie: cookie })).includes('404'),
-    );
+    check('the answer carries a cursor', typeof first.body?.seq === 'number', first.body?.seq);
 
-    const listener = await openSocket(`${wsBase}${LIVE_PATH}`, { Cookie: cookie });
+    let cursor = Number(first.body?.seq ?? 0);
 
-    check('a session cookie opens the socket', listener.socket.readyState === WebSocket.OPEN);
-    check('the socket greets with live:hello', await waitFor(() => listener.frames.length > 0));
-    const hello = findFrame(listener.frames, 'live:hello');
-    check('live:hello names the signed-in racer', typeof hello?.userId === 'string', hello);
-    check('live:hello carries a server id for redeploy detection', typeof hello?.serverId === 'string');
-
-    const withSocket = await call('GET', '/health');
-    check('/api/health reports the open socket', withSocket.body?.liveClients >= 1, withSocket.body);
-
-    // A race recorded over HTTP must reach a socket that had nothing to do with
-    // that request — the whole point of the channel.
-    listener.frames.length = 0;
+    /*
+     * A race recorded over HTTP must reach a poll that had nothing to do with
+     * that request — the whole point of the channel.
+     *
+     * No waiting loop here, unlike the socket this replaced: the event is
+     * written inside the request that caused it, so it is already durable by
+     * the time the response arrives. If the next poll doesn't see it, that is a
+     * real failure and not a slow one.
+     */
     const tagged = await fetch(`${url}/api/scores/record`, {
       method: 'POST',
       headers: {
@@ -792,12 +754,13 @@ async function main(): Promise<void> {
       }),
     });
     check('recording a race over HTTP still succeeds', tagged.status === 201, tagged.status);
-    check(
-      'the race reaches the socket as game:recorded',
-      await waitFor(() => Boolean(findFrame(listener.frames, 'game:recorded'))),
-      listener.frames,
-    );
-    const recorded = findFrame(listener.frames, 'game:recorded');
+
+    const afterRace = await poll(cursor, racerToken);
+    check('the poll advances the cursor', Number(afterRace.body?.seq) > cursor, afterRace.body?.seq);
+    check('the poll does not ask for a resync', afterRace.body?.resync === false);
+
+    const recorded = findEvent(afterRace.body, 'game:recorded');
+    check('the race arrives as game:recorded', Boolean(recorded), afterRace.body?.events);
     check(
       'game:recorded carries the winner the flyby needs',
       recorded?.winner?.id === 'seed-noam' &&
@@ -805,51 +768,96 @@ async function main(): Promise<void> {
         Boolean(recorded.winner.raceColor),
       recorded?.winner,
     );
-    check('game:recorded reports the winner’s all-time wins', typeof recorded?.winner?.allTime === 'number');
-    check('game:recorded echoes the calling tab as origin', recorded?.origin === 'smoke-tab', recorded?.origin);
-    check('the frame is stamped with a server time', typeof recorded?.at === 'string');
+    check(
+      'game:recorded reports the winner’s all-time wins',
+      typeof recorded?.winner?.allTime === 'number',
+    );
+    check(
+      'game:recorded echoes the calling tab as origin',
+      recorded?.origin === 'smoke-tab',
+      recorded?.origin,
+    );
+    check('the event is stamped with a server time', typeof recorded?.at === 'string');
+
+    cursor = Number(afterRace.body?.seq);
 
     // Config and content, not just scores.
-    listener.frames.length = 0;
     const newPun = await call('POST', '/admin/content/puns', {
       token: adminToken,
       body: { text: 'The live channel tested this pun.' },
     });
     check('creating a pun succeeds', newPun.status === 201, newPun.body);
+
+    const afterPun = await poll(cursor, racerToken);
     check(
-      'a pun edit reaches the socket as puns:changed',
-      await waitFor(() => Boolean(findFrame(listener.frames, 'puns:changed'))),
-      listener.frames,
+      'a pun edit arrives as puns:changed',
+      Boolean(findEvent(afterPun.body, 'puns:changed')),
+      afterPun.body?.events,
     );
     check(
       'a change made without a tab id carries no origin',
-      findFrame(listener.frames, 'puns:changed')?.origin === undefined,
+      findEvent(afterPun.body, 'puns:changed')?.origin === undefined,
     );
+
+    cursor = Number(afterPun.body?.seq);
 
     // A rename has no scores behind it, but every board joins the user document
     // on read — so it has to travel too.
-    listener.frames.length = 0;
     const renamed = await call('PATCH', '/users/seed-dana', {
       token: racerToken,
       body: { tagline: 'Brakes are a rumour.' },
     });
     check('editing your own profile succeeds', renamed.status === 200, renamed.body);
+
+    const afterRename = await poll(cursor, racerToken);
     check(
-      'a profile edit reaches the socket as roster:changed',
-      await waitFor(() => Boolean(findFrame(listener.frames, 'roster:changed'))),
-      listener.frames,
+      'a profile edit arrives as roster:changed',
+      Boolean(findEvent(afterRename.body, 'roster:changed')),
+      afterRename.body?.events,
     );
     check(
       'roster:changed says which racer moved, and why',
-      findFrame(listener.frames, 'roster:changed')?.reason === 'profile' &&
-        findFrame(listener.frames, 'roster:changed')?.userId === 'seed-dana',
-      findFrame(listener.frames, 'roster:changed'),
+      findEvent(afterRename.body, 'roster:changed')?.reason === 'profile' &&
+        findEvent(afterRename.body, 'roster:changed')?.userId === 'seed-dana',
+      findEvent(afterRename.body, 'roster:changed'),
     );
 
-    listener.socket.close();
+    /*
+     * A tab that fell behind, but not off the end. The log retains a bounded
+     * history and this run is comfortably inside it, so the right answer is the
+     * whole backlog and no resync — a resync here would mean refetching three
+     * endpoints to learn something the log could have told us.
+     */
+    const fromStart = await poll(0, racerToken);
     check(
-      'closing a tab releases its slot',
-      await waitFor(async () => (await call('GET', '/health')).body?.liveClients === 0),
+      'a cursor inside the retained history is served in full',
+      fromStart.body?.resync === false && fromStart.body?.events?.length > 0,
+      { resync: fromStart.body?.resync, count: fromStart.body?.events?.length },
+    );
+    check(
+      'a backlog arrives in sequence order',
+      Array.isArray(fromStart.body?.events) &&
+        fromStart.body.events.every(
+          (event: { seq: number }, index: number, all: Array<{ seq: number }>) =>
+            index === 0 || event.seq > all[index - 1].seq,
+        ),
+    );
+
+    /*
+     * A cursor from the future — a log that was reset underneath a tab holding a
+     * higher number from the previous one. Same answer, and worth its own check
+     * because the arithmetic that catches it is a different branch.
+     */
+    const ahead = await poll(Number(afterRename.body?.seq) + 5_000, racerToken);
+    check('a cursor ahead of the log forces a resync', ahead.body?.resync === true, ahead.body);
+
+    // Nothing changed since the last poll: the common case, and it must be
+    // cheap and empty rather than a resync.
+    const quiet = await poll(Number(afterRename.body?.seq), racerToken);
+    check(
+      'a poll with nothing new returns no events and no resync',
+      quiet.body?.resync === false && quiet.body?.events?.length === 0,
+      quiet.body,
     );
   }
 

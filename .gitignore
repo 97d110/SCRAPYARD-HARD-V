@@ -16,3 +16,12 @@ vite.config.*.timestamp-*
 # Login background media — large binaries, supplied per deployment.
 apps/api/public/login/*
 !apps/api/public/login/README.md
+# Vercel's local link state and the OIDC token it writes next to it.
+.vercel
+
+# Every env file, however it's suffixed — added by `vercel link`, and worth
+# keeping broad. The example is the one exception: it holds no real values and
+# is the documentation of record for which variables exist.
+.env*
+!.env.example
+!apps/api/.env.example

@@ -23,7 +23,7 @@ import {
 } from 'class-validator';
 import { AdminGuard, CurrentUser, JwtAuthGuard } from '../auth/guards';
 import { ClientId } from '../live/client-id.decorator';
-import { LiveGateway } from '../live/live.gateway';
+import { LiveService } from '../live/live.service';
 import { UsersService } from './users.service';
 import { RACERS, RACER_NAMES } from '../common/racers';
 import { RACE_COLORS } from '../common/race-colors';
@@ -77,7 +77,7 @@ export class CreateRacerDto {
 export class AdminUsersController {
   constructor(
     private readonly users: UsersService,
-    private readonly live: LiveGateway,
+    private readonly live: LiveService,
   ) {}
 
   /** Add a racer by email before they've ever signed in. */
@@ -85,7 +85,7 @@ export class AdminUsersController {
   async create(@Body() dto: CreateRacerDto, @ClientId() origin?: string): Promise<PublicUser> {
     const created = await this.users.createUnclaimed(dto);
     // A new seat is on every board immediately, at zero wins.
-    this.live.broadcast({
+    await this.live.broadcast({
       type: 'roster:changed',
       origin,
       reason: 'created',
@@ -111,7 +111,7 @@ export class AdminUsersController {
     const updated = await this.users.updateProfile(id, dto);
     // Same reason code as a self-edit — it's the same kind of change to the
     // same fields, and every client refreshes the roster identically either way.
-    this.live.broadcast({ type: 'roster:changed', origin, reason: 'profile', userId: id });
+    await this.live.broadcast({ type: 'roster:changed', origin, reason: 'profile', userId: id });
     return updated;
   }
 
@@ -120,7 +120,7 @@ export class AdminUsersController {
   @HttpCode(204)
   async remove(@Param('id') id: string, @ClientId() origin?: string): Promise<void> {
     await this.users.deleteUnclaimed(id);
-    this.live.broadcast({ type: 'roster:changed', origin, reason: 'deleted', userId: id });
+    await this.live.broadcast({ type: 'roster:changed', origin, reason: 'deleted', userId: id });
   }
 }
 
@@ -130,7 +130,7 @@ export class UsersController {
   constructor(
     private readonly users: UsersService,
     private readonly achievements: AchievementsService,
-    private readonly live: LiveGateway,
+    private readonly live: LiveService,
   ) {}
 
   /** The full roster. Fetched once on client boot. */
@@ -171,7 +171,7 @@ export class UsersController {
      * board and every rival list on screen. This is the cascade the aggregate-on-
      * read model spares the database, arriving at the clients instead.
      */
-    this.live.broadcast({ type: 'roster:changed', origin, reason: 'profile', userId: id });
+    await this.live.broadcast({ type: 'roster:changed', origin, reason: 'profile', userId: id });
     return updated;
   }
 }

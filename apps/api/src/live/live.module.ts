@@ -1,6 +1,6 @@
 import { Global, Module } from '@nestjs/common';
-import { LiveGateway } from './live.gateway';
-import { WebModule } from '../web/web.module';
+import { LiveController } from './live.controller';
+import { LiveService } from './live.service';
 
 /**
  * The live channel.
@@ -9,13 +9,14 @@ import { WebModule } from '../web/web.module';
  * controller broadcasts, and threading an import of this through all six
  * feature modules would buy nothing.
  *
- * WebModule comes in for `SessionReader` — the upgrade handshake is checked
- * with the exact same code that gates the SPA bundle, not a copy of it.
+ * WebModule used to be imported here for `SessionReader`, because the WebSocket
+ * upgrade had to authenticate itself. Polling is an ordinary guarded GET, so
+ * that dependency is gone — and with it the DI cycle it used to skirt.
  */
 @Global()
 @Module({
-  imports: [WebModule],
-  providers: [LiveGateway],
-  exports: [LiveGateway],
+  controllers: [LiveController],
+  providers: [LiveService],
+  exports: [LiveService],
 })
 export class LiveModule {}

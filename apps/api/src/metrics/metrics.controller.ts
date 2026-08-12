@@ -14,7 +14,7 @@ import {
 import { Type } from 'class-transformer';
 import { AdminGuard, JwtAuthGuard } from '../auth/guards';
 import { ClientId } from '../live/client-id.decorator';
-import { LiveGateway } from '../live/live.gateway';
+import { LiveService } from '../live/live.service';
 import { MetricsService } from './metrics.service';
 import type { MetricDef } from '@scrapyard/shared';
 
@@ -104,7 +104,7 @@ export class MetricsController {
 export class AdminMetricsController {
   constructor(
     private readonly metrics: MetricsService,
-    private readonly live: LiveGateway,
+    private readonly live: LiveService,
   ) {}
 
   @Get()
@@ -121,7 +121,7 @@ export class AdminMetricsController {
   @Post()
   async create(@Body() dto: CreateMetricDto, @ClientId() origin?: string): Promise<MetricDef> {
     const metric = await this.metrics.createMetric(dto);
-    this.live.broadcast({ type: 'metrics:changed', origin });
+    await this.live.broadcast({ type: 'metrics:changed', origin });
     return metric;
   }
 
@@ -132,7 +132,7 @@ export class AdminMetricsController {
     @ClientId() origin?: string,
   ): Promise<MetricDef> {
     const metric = await this.metrics.updateMetric(id, dto);
-    this.live.broadcast({ type: 'metrics:changed', origin });
+    await this.live.broadcast({ type: 'metrics:changed', origin });
     return metric;
   }
 
@@ -140,6 +140,6 @@ export class AdminMetricsController {
   @HttpCode(204)
   async remove(@Param('id') id: string, @ClientId() origin?: string): Promise<void> {
     await this.metrics.deleteMetric(id);
-    this.live.broadcast({ type: 'metrics:changed', origin });
+    await this.live.broadcast({ type: 'metrics:changed', origin });
   }
 }

@@ -76,10 +76,10 @@ export class PushService {
    * Fan a "race recorded" push out to every subscribed device.
    *
    * Deliberately swallows everything — a push failure, or the feature being
-   * unconfigured, must never affect recording a race. Call sites fire this
-   * without awaiting it for the same reason `LiveGateway.broadcast` is
-   * synchronous-and-unawaited: notifying the room is not part of the request
-   * that just happened.
+   * unconfigured, must never affect recording a race. Call sites hand this to
+   * `waitUntil` rather than awaiting it: notifying the room is not part of the
+   * request that just happened, but on a serverless runtime it still has to be
+   * registered with the platform or it may never run at all.
    */
   async notifyRaceRecorded(payload: {
     winnerName: string;

@@ -29,7 +29,7 @@ import {
 import { Type } from 'class-transformer';
 import { AdminGuard, CurrentUser, JwtAuthGuard } from '../auth/guards';
 import { ClientId } from '../live/client-id.decorator';
-import { LiveGateway } from '../live/live.gateway';
+import { LiveService } from '../live/live.service';
 import { PushService } from '../push/push.service';
 import { ScoresService } from './scores.service';
 import type {
@@ -42,6 +42,7 @@ import type {
   UpdateGameResponse,
 } from '@scrapyard/shared';
 import { dayKey, monthKey, periodKindOf } from '../common/period.util';
+import { waitUntil } from '../common/wait-until';
 
 export class GameResultDto {
   @IsString() @MinLength(1) @MaxLength(128)
@@ -118,7 +119,7 @@ export class RecordGameDto {
 export class ScoresController {
   constructor(
     private readonly scores: ScoresService,
-    private readonly live: LiveGateway,
+    private readonly live: LiveService,
     private readonly push: PushService,
   ) {}
 
@@ -185,15 +186,27 @@ export class ScoresController {
      * runs the winner's flyby. The recording tab has all of this in the response
      * below already, so it drops the echo on `origin`.
      */
-    this.live.broadcast({ type: 'game:recorded', origin, gameId: result.game.id, winner });
+    await this.live.broadcast({ type: 'game:recorded', origin, gameId: result.game.id, winner });
 
-    // Fire-and-forget: a push failure, or the feature being unconfigured,
-    // must never affect the response a racer is waiting on.
-    void this.push.notifyRaceRecorded({
-      winnerName: winner.displayName,
-      finishers: result.game.results.length,
-      note: result.game.note,
-    });
+    /*
+     * Fire-and-forget: a push failure, or the feature being unconfigured, must
+     * never affect the response a racer is waiting on. The fan-out can be slow —
+     * one request per subscribed device, plus a delete for each that answers 410.
+     *
+     * `waitUntil` is what keeps that true on a serverless runtime. An instance
+     * is free to freeze the moment its response is sent, so a bare `void` here
+     * would mean the notifications simply never went out, intermittently and
+     * silently, depending on how quickly the platform reclaimed the instance.
+     * This hands the promise to the platform instead: respond now, finish this
+     * afterwards. Outside Vercel it degrades to running the promise as before.
+     */
+    waitUntil(
+      this.push.notifyRaceRecorded({
+        winnerName: winner.displayName,
+        finishers: result.game.results.length,
+        note: result.game.note,
+      }),
+    );
 
     return {
       game: { id: result.game.id, at: result.game.at },
@@ -215,7 +228,7 @@ export class ScoresController {
 export class AdminGamesController {
   constructor(
     private readonly scores: ScoresService,
-    private readonly live: LiveGateway,
+    private readonly live: LiveService,
   ) {}
 
   /** Newest-first race log, optionally scoped to one day. Cursor-paginated. */
@@ -253,7 +266,7 @@ export class AdminGamesController {
      * every leaderboard plus any open profile. Same reasoning as delete — see
      * SELF_APPLIED in apps/web/src/lib/live.ts.
      */
-    this.live.broadcast({
+    await this.live.broadcast({
       type: 'game:updated',
       origin,
       gameId: result.game.id,
@@ -276,7 +289,7 @@ export class AdminGamesController {
     const result = await this.scores.deleteGame(id);
     // Deleting a race moves every board it touched, and any profile page open
     // on one of its finishers.
-    this.live.broadcast({
+    await this.live.broadcast({
       type: 'game:deleted',
       origin,
       gameId: result.deletedId,

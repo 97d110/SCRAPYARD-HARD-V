@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, UseGuards 
 import { IsBoolean, IsIn, IsNumber, IsOptional, IsPositive, IsString, MaxLength, MinLength } from 'class-validator';
 import { AdminGuard, JwtAuthGuard } from '../auth/guards';
 import { ClientId } from '../live/client-id.decorator';
-import { LiveGateway } from '../live/live.gateway';
+import { LiveService } from '../live/live.service';
 import { AchievementRulesService } from './achievement-rules.service';
 import type { AchievementRule } from '@scrapyard/shared';
 
@@ -64,7 +64,7 @@ export class UpdateRuleDto {
 export class AdminAchievementRulesController {
   constructor(
     private readonly rules: AchievementRulesService,
-    private readonly live: LiveGateway,
+    private readonly live: LiveService,
   ) {}
 
   @Get()
@@ -81,7 +81,7 @@ export class AdminAchievementRulesController {
   @Post()
   async create(@Body() dto: CreateRuleDto, @ClientId() origin?: string): Promise<AchievementRule> {
     const rule = await this.rules.createRule(dto);
-    this.live.broadcast({ type: 'achievement-rules:changed', origin });
+    await this.live.broadcast({ type: 'achievement-rules:changed', origin });
     return rule;
   }
 
@@ -92,7 +92,7 @@ export class AdminAchievementRulesController {
     @ClientId() origin?: string,
   ): Promise<AchievementRule> {
     const rule = await this.rules.updateRule(id, dto);
-    this.live.broadcast({ type: 'achievement-rules:changed', origin });
+    await this.live.broadcast({ type: 'achievement-rules:changed', origin });
     return rule;
   }
 
@@ -100,6 +100,6 @@ export class AdminAchievementRulesController {
   @HttpCode(204)
   async remove(@Param('id') id: string, @ClientId() origin?: string): Promise<void> {
     await this.rules.deleteRule(id);
-    this.live.broadcast({ type: 'achievement-rules:changed', origin });
+    await this.live.broadcast({ type: 'achievement-rules:changed', origin });
   }
 }

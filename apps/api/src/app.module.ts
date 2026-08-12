@@ -9,20 +9,19 @@ import { ContentModule } from './content/content.module';
 import { ConfigEditorModule } from './config/config-editor.module';
 import { WebModule } from './web/web.module';
 import { LiveModule } from './live/live.module';
-import { LiveGateway } from './live/live.gateway';
 import { PushModule } from './push/push.module';
 import { VoiceModule } from './voice/voice.module';
 import { dayKey, monthKey, timezoneName } from './common/period.util';
 
 @Controller()
 class MetaController {
-  constructor(private readonly live: LiveGateway) {}
-
   /**
-   * Public liveness probe. Deliberately leaks nothing but clock, db name and a
-   * socket count — the last of which is the only way to tell, on a free
-   * instance with no shell, whether the live channel is actually carrying
-   * anyone.
+   * Public liveness probe. Deliberately leaks nothing but clock and db name.
+   *
+   * It used to report `liveClients` too, which on a single always-on process
+   * was the only way to tell whether the live channel was carrying anyone. That
+   * number has no meaning now: there are no held connections to count, and any
+   * instance answering this would only ever see its own.
    */
   @Get('health')
   health(): {
@@ -31,7 +30,6 @@ class MetaController {
     day: string;
     month: string;
     database: string;
-    liveClients: number;
   } {
     return {
       status: 'ok',
@@ -39,10 +37,8 @@ class MetaController {
       day: dayKey(),
       month: monthKey(),
       database: process.env.MONGODB_DB || 'scrapyard',
-      liveClients: this.live.connectionCount,
     };
   }
-
 }
 
 @Module({

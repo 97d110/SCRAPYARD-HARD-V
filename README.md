@@ -5,20 +5,20 @@ into sci-fi neon. Google-Workspace-only sign-in, all-time / monthly / daily
 standings, streaks, achievements, and a spaceship called Arthur who does a
 victory lap every time somebody scores.
 
-**Stack:** NestJS + React + MongoDB Atlas, deployed to Render.
+**Stack:** NestJS + React + MongoDB Atlas, deployed to Vercel.
 
 ---
 
-## Deploy to Render
+## Deploy to Vercel
 
 Three things to set up. Budget ~20 minutes, most of it clicking through
-consoles. Both Render and Atlas have a free tier that never expires, so this
+consoles. Atlas and Vercel both have a free tier that never expires, so this
 costs nothing.
 
 ### 1. MongoDB Atlas
 
 [cloud.mongodb.com](https://cloud.mongodb.com) → **Create** → **Free (M0)**.
-Put it in **eu-central-1 (Frankfurt)** to match the Render region below —
+Put it in **eu-central-1 (Frankfurt)** to match the function region below —
 otherwise every query crosses an ocean twice.
 
 The free tier is 512 MB, 500 connections and never expires. This app writes a
@@ -27,7 +27,7 @@ few hundred bytes per race, so it will not trouble it.
 | Step | Where | What |
 | --- | --- | --- |
 | Database user | Database Access → Add New | Username + password. **Read and write to any database.** |
-| Network access | Network Access → Add IP | `0.0.0.0/0`. Render publishes [outbound IP ranges](https://render.com/docs/outbound-ip-addresses) you *could* allowlist instead, but they are shared and can change; the database credentials are the real access control either way. |
+| Network access | Network Access → Add IP | `0.0.0.0/0`. Serverless functions have no fixed egress address, so there is nothing narrower to allowlist; the database credentials are the real access control. |
 | Connection string | Cluster → Connect → Drivers | Copy it |
 
 > **URL-encode the password.** If it contains `@ : / ? # [ ] %` the connection
@@ -45,41 +45,82 @@ single easiest thing to get wrong:
 | Box | What goes in it |
 | --- | --- |
 | Authorised JavaScript origins | **leave empty.** It rejects anything with a path (`Invalid Origin: URIs must not contain a path`). We don't need it — the flow is a server-side redirect. |
-| **Authorised redirect URIs** | `https://<your-app>.onrender.com/api/auth/google/callback`<br>`http://localhost:3000/api/auth/google/callback` |
+| **Authorised redirect URIs** | `https://<your-project>.vercel.app/api/auth/google/callback`<br>`http://localhost:3000/api/auth/google/callback` |
 
-You won't know the `onrender.com` hostname until after the first deploy, so
-either add it in step 3 and come back, or guess it — Render derives it from the
-service name, so a service called `scrapyard` usually lands on
-`scrapyard.onrender.com` (it appends a suffix if that's taken).
+Vercel derives the production domain from the project name, so a project called
+`scrapyard-hard-v` lands on `scrapyard-hard-v.vercel.app` (it appends a suffix
+if that's taken). You can therefore fill this in before the first deploy, but
+check the real domain afterwards — a mismatch is `redirect_uri_mismatch` and
+nothing else.
 
 A client can hold several redirect URIs, so keep the localhost one for
 development.
+
+**Preview deployments cannot sign in.** Each gets its own generated hostname,
+which will never be in this list. That is a deliberate consequence rather than a
+problem to solve: previews are for checking everything up to the login page.
 
 If your project sits in a Workspace organisation, set the consent screen's user
 type to **Internal** — no verification, no scope review, and Google filters the
 account chooser to your tenant before our own check even runs.
 
-### 3. Render
+### 3. Vercel
 
-Push the repo to GitHub, then **Dashboard → New → Blueprint** and point it at
-the repo. [`render.yaml`](render.yaml) declares the whole service: free plan,
-Frankfurt, build, start command, health check.
+Push the repo to GitHub, then **Add New → Project** and import it — or from a
+checkout, `npx vercel link` followed by `npx vercel deploy --prod`.
 
-Render prompts you for the four secrets the Blueprint marks `sync: false`:
+[`vercel.json`](vercel.json) declares the whole deployment, and every line of it
+is load-bearing:
+
+| Key | Why |
+| --- | --- |
+| `framework: null` | The repo has Vite in its devDependencies, so Vercel's detection guesses "Vite" and tries to serve a static site — which would skip the server entirely. |
+| `buildCommand` | `tsc` for the API, `vite build` for the client. Both need devDependencies, which is why `NODE_ENV=production` must never be set at *build* time. |
+| `outputDirectory: "public"` | Vercel requires one. Ours is deliberately empty — see [`public/README.md`](public/README.md). Anything in it is served by the CDN *before* the session gate runs. |
+| `rewrites` | Sends every path to the one function. Express does the routing inside, exactly as it does when the app runs as a process. |
+| `functions.includeFiles` | Puts `apps/web/dist` in the deployment. Bundling traces `require`, which never reaches an asset directory, so without this the app boots and then cannot find its own bundle. |
+| `regions: ["fra1"]` | Frankfurt, next to Atlas. |
+
+Then set the environment variables (**Settings → Environment Variables**, or
+`npx vercel env add NAME production`):
 
 ```dotenv
 MONGODB_URI=mongodb+srv://user:pass@cluster.xxxxx.mongodb.net/?retryWrites=true&w=majority
+MONGODB_DB=scrapyard-hard-v
 GOOGLE_CLIENT_ID=....apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=GOCSPX-...
-GOOGLE_CALLBACK_URL=https://<your-app>.onrender.com/api/auth/google/callback
-DATA_ENCRYPTION_KEY=<output of `openssl rand -base64 32`>
+GOOGLE_CALLBACK_URL=https://<your-project>.vercel.app/api/auth/google/callback
+JWT_SECRET=<openssl rand -hex 32>
+DATA_ENCRYPTION_KEY=<openssl rand -base64 32>
+ALLOWED_WORKSPACE_DOMAINS=cytactic.com
+ADMIN_EMAILS=you@cytactic.com
+SCRAPYARD_TIMEZONE=Asia/Jerusalem
+TRUST_PROXY=true
+PREFLIGHT=off
 ```
 
-`DATA_ENCRYPTION_KEY` encrypts every racer's email and Google id at rest —
-keep a copy of it somewhere durable outside Render. Unlike `JWT_SECRET`,
-losing or rotating it doesn't just log people out; it makes existing racers'
-email/Google id permanently undecryptable, and they can no longer be looked
-up on login.
+Optional on top of those: `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` /
+`VAPID_SUBJECT` for push, and `GROQ_API_KEY` / `GROQ_MODEL` /
+`GROQ_TRANSCRIBE_MODEL` for voice entry. Leave either group unset and that
+feature just hides itself.
+
+Three of those deserve a note:
+
+- **`TRUST_PROXY=true` is not optional.** TLS terminates at Vercel's edge, so
+  the hop to the function is plain HTTP. `auth.controller.ts` builds the
+  post-login redirect from `request.protocol`, so without this you are sent back
+  to an `http://` URL after signing in.
+- **`PREFLIGHT=off`.** The boot diagnostics open a second MongoClient and run
+  DNS and OAuth checks. That is worth it once at the start of a long-lived
+  process and wasteful on every cold start. Run it from a laptop instead:
+  `npm run preflight`.
+- **`WEB_ORIGIN` must stay unset.** One origin serves everything, so CORS stays
+  off; setting it breaks post-login redirects.
+
+`DATA_ENCRYPTION_KEY` encrypts every racer's email and Google id at rest — keep
+a copy somewhere durable. Unlike `JWT_SECRET`, losing or rotating it doesn't
+just log people out; it makes existing racers' email/Google id permanently
+undecryptable, and they can no longer be looked up on login.
 
 **Upgrading a deployment that already has real racers?** Set
 `DATA_ENCRYPTION_KEY` and run the one-off migration against that database
@@ -90,21 +131,8 @@ email/googleId in place (games, scores and achievements aren't touched):
 DATA_ENCRYPTION_KEY="..." MONGODB_URI="mongodb+srv://..." npm run migrate:encrypt-users
 ```
 
-Everything else — `MONGODB_DB`, `ALLOWED_WORKSPACE_DOMAINS`, `ADMIN_EMAILS`,
-`SCRAPYARD_TIMEZONE`, `PORT`, `TRUST_PROXY` — is already in the Blueprint, and
-`JWT_SECRET` is generated by Render (`generateValue: true`) so you never see or
-choose it.
-
-Two things Render does for you that the app relies on:
-
-- **`NODE_ENV=production` at runtime**, which is what puts the `Secure` flag on
-  the session cookie. Note it is *runtime only* — `npm ci` at build time still
-  installs `devDependencies`, which is how `tsc` and `vite` are available.
-- **TLS at the edge.** `TRUST_PROXY=true` in the Blueprint is what makes
-  `request.protocol` and `request.ip` reflect what the browser actually did.
-
 Once it's green, seed demo data if you want something to look at (run it from
-your laptop — free instances have no shell):
+your laptop — there is no shell on a function):
 
 ```bash
 MONGODB_URI="mongodb+srv://..." MONGODB_DB=scrapyard npm run seed
@@ -117,27 +145,29 @@ Visit the URL. You'll land on `/login`. Sign in with the account listed in
 
 | | |
 | --- | --- |
-| Instance | 512 MB RAM, 0.1 CPU |
-| Idle | Spins down after **15 minutes** without inbound traffic |
-| Wake | **~1 minute**, with a Render loading page in front of it |
-| Quota | 750 instance-hours per workspace per month; spun-down time doesn't count. Exhaust it and free services are suspended until the 1st |
-| Disk | None. The filesystem is ephemeral — fine, because all state is in Atlas |
-| TLS | Free and managed, on `onrender.com` and on custom domains |
+| Function | 2 GB / 1 vCPU, fixed on Hobby |
+| Idle | Nothing runs, and nothing is billed, between requests |
+| Cold start | A second or so — building the Nest DI graph and opening an Atlas connection. Fluid compute keeps instances warm through a burst, so only the first person after a quiet spell pays it |
+| Duration | 300 s ceiling; `vercel.json` caps this app at 60 s, which is well clear of the ~65 s worst case for voice entry |
+| Invocations | 1M/month, and 1M edge requests. Every request counts, including each static asset — see the note in `public/README.md` |
+| Active CPU | 4 CPU-hrs/month. Only counts code actually executing, not time waiting on Atlas or Groq |
+| Provisioned memory | 360 GB-hrs/month — about 180 instance-hours at 2 GB. **This is the one to watch**, and the reason the live channel polls rather than holding a connection |
+| Transfer | 100 GB out of the CDN, 10 GB out of the function |
+| Disk | None. The filesystem is read-only apart from `/tmp` — fine, because all state is in Atlas |
+| Request/response body | 4.5 MB, hard. Relevant to avatar uploads, voice audio and the database export |
+| TLS | Free and managed, on `vercel.app` and on custom domains |
 
-The first person to open Scrapyard each morning waits a minute. Everyone after
-them doesn't. If that's annoying, the Starter plan removes spin-down.
-
-> Render "may suspend a Free web service that initiates an uncommonly high
-> volume of traffic over the public internet", and it counts external database
-> access. A leaderboard for one team is nowhere near that, but it's the reason
-> not to add a polling loop.
+> The Hobby plan is [non-commercial personal use only](https://vercel.com/docs/limits/fair-use-guidelines#commercial-usage).
+> Vercel's own examples are all about payments, ads and affiliate links, none of
+> which this has — but the definition is broader than the examples, so if this
+> ever becomes something a business depends on, Pro is the honest answer.
 
 ### Custom domain
 
-Render → your service → **Settings → Custom Domains** → add
-`scrapyard.cytactic.com`, then create the CNAME it shows you. TLS is issued
-automatically. **Add the new callback URL to the Google client and update
-`GOOGLE_CALLBACK_URL`** — a mismatch gives you `redirect_uri_mismatch`.
+Vercel → your project → **Settings → Domains** → add `scrapyard.example.com`,
+then create the CNAME it shows you. TLS is issued automatically. **Add the new
+callback URL to the Google client and update `GOOGLE_CALLBACK_URL`** — a
+mismatch gives you `redirect_uri_mismatch`.
 
 ---
 
@@ -176,8 +206,9 @@ JWT_SECRET=smoke DATA_ENCRYPTION_KEY=$(openssl rand -base64 32) npm run smoke
 Boots the real Nest app, seeds, and exercises every route: auth gate, domain
 restriction, admin reconciliation, the award path, achievements, the zip export,
 12 concurrent awards, path-traversal rejection, and the live channel (an
-anonymous upgrade is refused, a cross-origin one is refused, then a real socket
-receives a race, a content edit and a profile edit recorded over HTTP).
+anonymous poll is refused, then a real poll receives a race, a content edit and
+a profile edit recorded over HTTP, and a cursor outside the retained history is
+told to resync).
 
 **It drops the database it points at**, so the name must contain `smoke` or
 `test` — the suite refuses to run otherwise.
@@ -228,16 +259,47 @@ straight from the index without touching documents.
 
 ## Live updates
 
-Every open tab holds a WebSocket to `/api/live`. When the database changes, the
-other tabs find out and re-read what moved — so a race scored on somebody's
-phone lands on the wall display a moment later, with the winner's flyby, and
-nobody reloads anything.
+Every open tab polls `/api/live/events` every ten seconds and asks what has
+happened since it last checked. When the database changes, the other tabs find
+out and re-read what moved — so a race scored on somebody's phone lands on
+everyone else's board a few seconds later, with the winner's flyby, and nobody
+reloads anything.
 
-There is a **Live / Syncing / Offline** pill in the top bar. It is there because
-on a wall display "the board hasn't changed in a while" and "this tab stopped
+There is a **Live / Syncing / Paused / Offline** pill in the top bar. It is
+there because "the board hasn't changed in a while" and "this tab stopped
 listening an hour ago" look exactly the same, and only one of them is fine.
+`Paused` is the fourth state for the same reason: a tab that stopped on purpose
+must not be reported as broken.
 
-### The socket carries notifications, not data
+### Why polling, when a socket is obviously nicer
+
+Because the socket is what ran the previous host out of free tier, and it would
+have done worse here.
+
+A WebSocket is the better design when the server is a process that is running
+anyway. This one isn't: it is a function that exists only while it is handling a
+request. A held-open connection pins an instance for its whole lifetime, and
+Vercel bills provisioned memory for exactly that — 360 GB-hrs a month at a fixed
+2 GB, which is about 180 instance-hours. One tab left open around the clock
+would spend the entire month's allowance in roughly a week.
+
+The previous host failed the same way for a different reason. Its free tier
+billed *instance-hours* and spun a service down after 15 minutes idle — but the
+socket's own 30-second heartbeat is inbound traffic, so a tab sitting open kept
+the instance awake permanently and burned all 750 hours.
+
+A poll costs something only when it happens, which turns "don't be wasteful"
+into something the client can actually enforce:
+
+- **Unfocused tab → stop immediately.** Nobody is reading it.
+- **Focused but untouched for 8 minutes → stop.** The tab in the background of
+  somebody's afternoon is the expensive case, and the one that looks active.
+
+Coming back — focus, a click, a keypress, a scroll — resumes and polls at once.
+Vercel does now support WebSockets, so this is a cost decision rather than a
+capability one.
+
+### The poll carries notifications, not data
 
 An event says *what changed* and the client refetches the affected endpoint. It
 does not ship the new leaderboards down the wire, which would put a second copy
@@ -252,57 +314,57 @@ recoverable from "something changed".
 | Event | Sent when | Clients re-read |
 | --- | --- | --- |
 | `game:recorded` | a race is recorded | boards, roster, open profiles — and the flyby runs |
+| `game:updated` | an admin corrects a race | boards, roster, race log, open profiles — no flyby |
 | `game:deleted` | an admin deletes a race | boards, roster, race log, open profiles |
 | `roster:changed` | profile edit, admin-created or deleted racer, or a sign-in that claims a seat or reconciles a role | roster **and boards** — rows join the user document on read, so a rename changes every board |
 | `puns:changed` | the puns editor | the ticker, and the editor in any other admin's tab |
 | `metrics:changed` | a metric is added, retuned or removed | boards — a metric is a *column* |
 | `achievement-rules:changed` | a badge rule changes | open profile pages; a retuned threshold can unlock a badge with no write to that racer |
 
-`live:hello` arrives first on every connection. It proves the cookie was
-accepted, and it carries a `serverId` that changes on every boot — which is how
-a client tells "my connection dropped" (catch up on what I missed) from "the
-service was redeployed" (also go look for a new bundle).
+### How a tab knows where it is
+
+The server keeps a single document — `liveLog` — holding a monotonic `seq` and
+the last hundred events. A tab sends the highest `seq` it has applied and gets
+back everything after it. The sequence number is minted inside the same
+aggregation-pipeline update that appends the event, so two concurrent writes can
+never collide on one.
+
+When a tab has no position yet, or has fallen further behind than the retained
+history, the answer is `resync` instead: *I can't tell you what you missed, go
+re-read everything.* A partial history would leave a board confidently wrong,
+which is worse than a refetch. The client turns that into the same `live:hello`
+frame the socket used to send on connect, so the handling is unchanged.
+
+Each answer also carries the **deployment id**. A value the tab hasn't seen
+before means a new version shipped, which is the cue to go looking for a new
+bundle. That used to be a per-boot uuid, which on a serverless runtime would
+change on every cold start and cry wolf.
 
 ### What it is not
 
 - **Not a Mongo change stream.** Writes that don't go through the API — `npm run
-  seed`, an edit in the Atlas console — are invisible, and so is a second
-  instance's traffic. Both are fine for the single Render process this is built
-  for; both would want `broadcast` fed by a change stream if that ever changes.
-- **Not authenticated separately.** A browser can't set headers on a WebSocket
-  handshake, so the same-origin session cookie is the gate, checked by the same
-  `SessionReader` that gates the SPA bundle. An anonymous upgrade gets a 401.
-  The `Origin` is checked too — a WebSocket handshake is not subject to CORS, so
-  `SameSite=Lax` is otherwise the only thing standing between another site and
-  your roster.
-- **Not polling.** Which matters here: Render warns about free services that
-  generate "an uncommonly high volume of traffic", and a poll loop across the
-  crew is exactly that.
+  seed`, an edit in the Atlas console — are still invisible. What *did* improve:
+  the log is shared state rather than one process's memory, so a second
+  instance's traffic is visible, which it never was before.
+- **Not a socket, and not authenticated separately.** The WebSocket had to
+  authenticate its own upgrade by hand (a browser can't set headers on a
+  handshake) and check `Origin` explicitly, because a handshake isn't subject to
+  CORS. As an ordinary guarded `GET` both of those special cases disappear.
 
 ### What it costs on the free plan
 
-The server pings each socket every 30 seconds to notice tabs that vanished
-without closing and to stay off the proxy's idle-timeout list. The browser
-answers automatically, and **that answer is inbound traffic, so an open tab
-keeps the instance awake.** A permanently-open wall display therefore burns the
-750-hour monthly quota (24 × 31 = 744, so it sits right at the ceiling) exactly
-as a keep-warm pinger would.
-
-The difference is that this only happens while somebody actually has the app
-open, which is also when they'd want it awake. If the display is meant to be up
-around the clock, Starter is the honest answer — same conclusion as
-[cold starts](#known-trade-offs).
-
-`GET /api/health` reports `liveClients`, which on a free instance with no shell
-is the only way to tell whether the channel is carrying anyone.
+A poll is a small `findOne` on `_id`, and most of them return nothing. Ten
+people using the app for an hour a day comes to roughly 108k invocations a
+month against an allowance of 1M — and an idle tab contributes nothing at all,
+which is the entire point of the two rules above.
 
 ### A tab's own echo
 
 Each tab sends an `X-Scrapyard-Client` id on every mutating request, and the
-server echoes it back on the resulting event as `origin`. A tab ignores its own
-echo only for `game:recorded`, because `POST /scores/record` answers with the
-three recomputed boards and the client writes those straight in — re-running the
-flyby would fire it twice.
+server records it on the resulting event as `origin`. A tab ignores its own echo
+only for `game:recorded`, because `POST /scores/record` answers with the three
+recomputed boards and the client writes those straight in — re-running the flyby
+would fire it twice.
 
 Every other event is processed even in the tab that caused it: `origin` says who
 sent the request, not that they learned the whole result. `DELETE
@@ -310,8 +372,8 @@ sent the request, not that they learned the whole result. `DELETE
 boards at all, so an admin who deletes a race needs that event as much as anyone
 else does.
 
-The id is **per tab, not per user** — somebody with the display open and their
-phone in hand must still see the phone's race land on the wall.
+The id is **per tab, not per user** — somebody scoring a race on their phone
+must still see it land on the laptop they left open.
 
 ---
 
@@ -329,10 +391,10 @@ phone in hand must still see the phone's race land on the wall.
   │                      │          │ valid · installable  │
   └──────────┬───────────┘          └──────────┬───────────┘
              │                                 │  /api/*
-             │                                 │  ws /api/live ◄── pushed
+             │                                 │  /api/live/events ──► polled
              └──────────────┬──────────────────┘
                   ┌─────────▼──────────────────────┐
-                  │ Render web service (one dyno)  │
+                  │ Vercel Function (fra1)         │
                   │ Nest serves all three          │
                   │ Google OAuth → JWT cookie      │
                   └─────────────┬──────────────────┘
@@ -343,9 +405,11 @@ phone in hand must still see the phone's race land on the wall.
                   └────────────────────────────────┘
 ```
 
-One origin, one process. `mountSpa` checks the session cookie *before* it will
+One origin, one function. `mountSpa` checks the session cookie *before* it will
 hand over `apps/web/dist`, so an anonymous visitor gets the 16 KB login page and
-never sees the application bundle at all.
+never sees the application bundle at all. Nothing is served from Vercel's CDN,
+because the CDN answers from the filesystem before routing reaches that check —
+which is why `public/` is empty and the bundle is read by the function instead.
 
 ### Repo layout
 
@@ -356,8 +420,10 @@ mapping.
 ```
 package.json           the only manifest
 tsconfig.base.json     shared options + the @scrapyard/shared path mapping
-render.yaml            the Render Blueprint
-.node-version          pins Node for Render's builder
+vercel.json            the deployment: build, region, rewrite, includeFiles
+api/index.js           the Vercel entrypoint — plain JS on purpose
+public/                deliberately empty; see its README
+.node-version          the Node version for local tooling
 apps/
   api/                 NestJS
   web/                 React + Vite
@@ -413,7 +479,7 @@ would fight Vite's HMR and cache stale modules.
 
 | | |
 | --- | --- |
-| `/api/*` and any non-GET | never touched. Scores must be live, caching a mutation would be a bug, and the live socket lives under `/api` |
+| `/api/*` and any non-GET | never touched. Scores must be live, caching a mutation would be a bug, and the live poll lives under `/api` |
 | `/login` and its media | never touched. It must never be served from cache to somebody who has since signed in, and its background video is far too big to keep |
 | navigations | network-first, falling back to the cached app shell — a flaky link opens the app instead of the browser's dinosaur |
 | everything else | stale-while-revalidate: instant from cache, refreshed behind you. Safe because the bundle's filenames are content-hashed |
@@ -430,14 +496,14 @@ Two rules exist because breaking them is subtle and the symptom is bizarre:
   which then overwrites the app shell. The same goes for any unknown path, which
   the server answers with `index.html` via the SPA fallback.
 
-### Updating a display nobody reloads
+### Updating a tab nobody reloads
 
-The whole point of the wall display is that it is never touched, so a deploy has
-to reach it by itself. [`apps/web/src/lib/pwa.ts`](apps/web/src/lib/pwa.ts) looks
-for a new worker when the tab becomes visible, on a 30-minute timer, and the
-moment the live socket reports a `serverId` it hasn't seen — the earliest signal
-that a deploy landed. The new worker calls `skipWaiting()`, claims its clients,
-and the page reloads itself once onto the new bundle.
+An installed PWA can sit open for days, so a deploy has to reach it by itself.
+[`apps/web/src/lib/pwa.ts`](apps/web/src/lib/pwa.ts) looks for a new worker when
+the tab becomes visible, on a 30-minute timer, and the moment the live poll
+returns a deployment id it hasn't seen — the earliest signal that a deploy
+landed. The new worker calls `skipWaiting()`, claims its clients, and the page
+reloads itself once onto the new bundle.
 
 ### Offline
 
@@ -490,28 +556,36 @@ everything that matters inside the middle ~60%.
 
 ## Known trade-offs
 
-**Cold starts.** A free instance spins down after 15 idle minutes and takes
-about a minute to come back, during which Render shows its own loading page.
-Nothing is lost — all state is in Atlas — but the first visit of the day is
-slow. Pinging the service to keep it warm burns the 750-hour monthly quota
-(24×31 = 744, so a permanently-awake free service is right at the ceiling and
-one restart puts you over). Starter is the honest fix.
+**Cold starts.** There is no always-running process, so the first request after
+a quiet spell builds the Nest DI graph and opens an Atlas connection before it
+can answer — roughly a second. Fluid compute keeps an instance warm through a
+burst, so this is paid once rather than per request, and nothing is lost because
+all state is in Atlas. Deliberately not fixed by pinging: a keep-warm loop
+spends the monthly allowance to save one person one second.
 
-**No disk.** Free instances have an ephemeral filesystem, so anything written
-at runtime is gone on the next deploy or spin-down. This app never writes to
-disk; the zip export is streamed straight to the response.
+**No disk.** The filesystem is read-only apart from `/tmp`, and nothing survives
+between invocations. This app never writes to disk; the zip export is streamed
+straight to the response.
 
-**Atlas is over the public internet.** Render's free tier can't use private
-networking to a third party, so the connection is TLS over the open net with
-credentials as the gate. Keep Atlas in Frankfurt to keep the round trip short.
+**The 4.5 MB body cap.** A hard platform limit in both directions. It bounds
+avatar uploads, the base64 audio sent to voice entry, and the database export —
+the last of which was 139 KB at the time of the migration, so there is room, but
+it is a ceiling rather than a soft limit and it fails abruptly with a 413.
 
-**Node version pinning.** `.node-version` pins `22.22.0`. Render resolves an
-unbounded `engines` range to the newest Node release, which would silently
-change under you; `package.json` now carries an upper bound too.
+**Atlas is over the public internet.** Functions have no fixed egress address
+and no private link to a third party on this plan, so the connection is TLS over
+the open net with credentials as the gate. Keep Atlas in Frankfurt, and the
+function in `fra1`, to keep the round trip short.
+
+**Node version pinning.** `.node-version` pins `22.22.0` for local tooling, and
+`package.json` carries a bounded `engines` range. Vercel reads the range rather
+than the file, so an unbounded one would silently move to the newest Node
+release under you.
 
 **Self-hosting the login video** works — Nest serves it from
 `apps/api/public/login/` before the session gate — but it's a large binary in
-Git and free instances have modest bandwidth. The YouTube embed is the default
+Git, it has to be listed under `functions.includeFiles` to reach the
+deployment, and every byte counts against the function's transfer allowance. The YouTube embed is the default
 and costs you nothing. See
 [`apps/api/public/login/README.md`](apps/api/public/login/README.md).
 
@@ -534,24 +608,26 @@ npm run smoke        # full end-to-end suite (needs MONGODB_URI)
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| First request takes ~60s | Free instance spun down after 15 idle minutes | Working as designed; upgrade to Starter to stop it |
-| `MONGODB_URI is not set` | Missing env var | Set it locally in `apps/api/.env`, on Render under Environment |
+| First request after a quiet spell takes ~1s | Cold start: Nest's DI graph plus an Atlas handshake | Working as designed. Don't add a keep-warm ping — it spends the monthly allowance to save one second |
+| `MONGODB_URI is not set` | Missing env var | Set it locally in `apps/api/.env`, on Vercel under Settings → Environment Variables |
 | Mongo connection times out | Atlas Network Access | Add `0.0.0.0/0` |
 | Mongo auth fails with a valid password | Special characters | URL-encode the password, or regenerate it alphanumeric |
-| Build fails on `tsc: not found` | `NODE_ENV=production` set as a *build* variable, pruning devDependencies | Remove it; Render sets it at runtime for you |
+| Build fails on `tsc: not found` | `NODE_ENV=production` set as a *build* variable, pruning devDependencies | Remove it; the platform sets it at runtime for you |
 | `Invalid Origin: URIs must not contain a path` | Callback pasted into **JavaScript origins** | Move it to **Authorised redirect URIs**; leave origins empty |
 | `redirect_uri_mismatch` | Console URI ≠ `GOOGLE_CALLBACK_URL` | Make them byte-identical, including scheme and trailing path |
 | `Only @cytactic.com accounts can access Scrapyard` | Signed in with a personal account | Working as designed |
-| Bounced to `/login` right after signing in | `JWT_SECRET` changed, or `WEB_ORIGIN` set on Render | Clear cookies; leave `WEB_ORIGIN` unset |
-| Cookie warning in the logs on Render | `NODE_ENV` overridden | Unset it, or set `COOKIE_SECURE=true` |
+| Bounced to `/login` right after signing in | `JWT_SECRET` changed, or `WEB_ORIGIN` set | Clear cookies; leave `WEB_ORIGIN` unset |
+| Sent back to an `http://` URL after signing in | `TRUST_PROXY` unset, so `request.protocol` reads the plain-HTTP hop from the edge | Set `TRUST_PROXY=true` |
+| Cookie warning in the logs | `NODE_ENV` overridden | Unset it, or set `COOKIE_SECURE=true` |
 | Admin page says admin-only | Not in `ADMIN_EMAILS` | Add it, then **sign out and back in** — the role reconciles at login |
 | `the 'bg-void' class does not exist` | Tailwind config not found | Configs are `.mjs` with absolute paths; the build runs from the repo root |
 | `Cannot find module @rollup/rollup-*` | npm optional-dependency bug | `rm -rf node_modules package-lock.json && npm install` |
-| Top bar says **Offline**, boards never move | The live socket can't connect | Check `liveClients` on `/api/health`. It retries on its own with backoff — a stuck "Offline" with the site otherwise working means the upgrade is being refused, so look for a `[Live] Refused a live socket` line in the logs |
-| Live updates work in production, not in `npm run dev` | `ws: true` missing from Vite's `/api` proxy, so Vite answers the upgrade itself | It's in [vite.config.mts](apps/web/vite.config.mts) — everything else on `/api` keeps working, which makes this a confusing one to spot |
-| `[Live] Refused a live socket from …` | The app is served from an origin this service doesn't answer to | List that origin in `WEB_ORIGIN`. A WebSocket handshake isn't subject to CORS, so this check is deliberate, not incidental |
+| Top bar says **Paused**, boards never move | Working as designed — the tab is unfocused, or has been untouched for 8 minutes | Click it. See [Live updates](#live-updates) for why an idle tab stops |
+| Top bar says **Offline**, boards never move | The poll is failing | `curl /api/live/events` with a session cookie. It retries with backoff on its own, so a stuck "Offline" with the site otherwise working means the endpoint is returning an error — check the function logs |
+| Top bar says **Offline** and nothing recovers | The session expired while the tab sat idle | The poll stops for good on a 401 rather than hammering a dead session. Reload; you'll be sent to `/login` |
+| Everything refetches on every poll | The client is being told to resync each time | Its cursor is outside the retained history (100 events) or ahead of it. A log that was dropped and recreated under a long-lived tab does this; a reload clears it |
 | Installed app won't sign in on iOS | Google's consent screen leaves the manifest scope and iOS hands it to Safari, which has its own cookie jar | Sign in using the app in Safari; see [Installing it](#installing-it-the-pwa) |
-| A deploy doesn't reach the wall display | Service worker didn't pick up the new build | It checks on visibility, every 30 minutes, and on a new `serverId` from the socket. Confirm `sw.js` is being served with `Cache-Control: max-age=0` (Express's default here) |
+| A deploy doesn't reach a long-open tab | Service worker didn't pick up the new build | It checks on visibility, every 30 minutes, and when the poll returns a new deployment id. Confirm `sw.js` is being served with `Cache-Control: max-age=0` (Express's default here) |
 | Offline launch shows the login wall | An old service worker cached `/login` as the app shell | Fixed in `scrapyard-v3`; bumping the cache name is what discards a poisoned shell |
 
 ---

@@ -16,17 +16,19 @@ import type { RaceColor, UserRole } from '@scrapyard/shared';
  *
  * ── One client, reused ──────────────────────────────────────────────────────
  *
- * Render runs a single long-lived process, so the client is created once at
- * first use and kept for the lifetime of the service. Two details still matter:
+ * The client is created once at first use and kept for the lifetime of the
+ * process. Two details still matter:
  *
  *  - The connect *promise* is cached, not just the resolved client, so requests
  *    arriving during startup share one handshake instead of racing to open
  *    several.
- *  - It lives on `globalThis` rather than the instance, so `ts-node --watch` in
- *    development doesn't leak a connection on every reload.
+ *  - It lives on `globalThis` rather than the instance, so neither
+ *    `ts-node --watch` in development nor a warm serverless instance being
+ *    reused leaks a connection.
  *
- * Atlas's free tier allows 500 connections; a single process with a pool of 5
- * is nowhere near that.
+ * That second point is why this survives the move to Vercel unchanged: a warm
+ * function instance re-enters the module with `globalThis` intact and reuses the
+ * existing pool, so only a genuine cold start pays for a handshake.
  */
 
 export interface UserDoc {
@@ -187,6 +189,26 @@ export interface PushSubscriptionDoc {
   userAgent?: string;
 }
 
+/**
+ * The live event log — one document, `_id: 'global'`.
+ *
+ * Replaces the in-memory socket fan-out. Every mutating request appends the
+ * event it would once have pushed down a WebSocket, and clients poll for
+ * everything past the sequence number they last saw. A single bounded document
+ * rather than a collection of events because the read is then a `findOne` on
+ * `_id` — the cheapest query Mongo has, and the one every poll pays for.
+ *
+ * `seq` is monotonic and assigned inside the same pipeline update that appends,
+ * so two concurrent writes can never mint the same number. `events` is capped
+ * at RING_SIZE; a client that falls further behind than that is told to resync
+ * rather than handed a partial history.
+ */
+export interface LiveLogDoc {
+  _id: string;
+  seq: number;
+  events: Array<Record<string, unknown> & { seq: number; at: string }>;
+}
+
 /** Cache slot on globalThis — survives dev-server reloads. */
 interface MongoGlobal {
   client?: MongoClient;
@@ -224,9 +246,14 @@ export class MongoService implements OnModuleDestroy {
     // Two concurrent cold requests must share one handshake, not race.
     cache.connecting ??= (async () => {
       const client = new MongoClient(this.uri(), {
-        // Comfortably serves one process; well under Atlas's 500 ceiling even
-        // if you later run several instances.
-        maxPoolSize: 10,
+        /*
+         * Deliberately small. Under Fluid compute one instance serves many
+         * concurrent requests, so a handful of instances covers this app's whole
+         * load — but the ceiling that matters is Atlas M0's 500 connections
+         * shared across *every* live instance, and a pool that is generous
+         * per-instance multiplies. Five is ample for the request rate here.
+         */
+        maxPoolSize: 5,
         minPoolSize: 0,
         // Fail fast rather than hanging a request for 30s on a bad URI.
         serverSelectionTimeoutMS: 8000,
@@ -276,6 +303,10 @@ export class MongoService implements OnModuleDestroy {
 
   async pushSubscriptions(): Promise<Collection<PushSubscriptionDoc>> {
     return (await this.db()).collection<PushSubscriptionDoc>('pushSubscriptions');
+  }
+
+  async liveLog(): Promise<Collection<LiveLogDoc>> {
+    return (await this.db()).collection<LiveLogDoc>('liveLog');
   }
 
   /**
@@ -346,7 +377,7 @@ export class MongoService implements OnModuleDestroy {
     }
   }
 
-  /** Close cleanly on shutdown so Render's deploys don't leak connections. */
+  /** Close cleanly on shutdown so a redeploy doesn't leak connections. */
   async onModuleDestroy(): Promise<void> {
     if (cache.client) {
       await cache.client.close();

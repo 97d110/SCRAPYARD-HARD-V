@@ -224,10 +224,11 @@ function AccountCard({ me }: { me: PublicUser }) {
   );
 }
 
-/** What each connection state means, in words, for the tooltip. */
+/** What each channel state means, in words, for the tooltip. */
 const LIVE_DETAIL: Record<LiveStatus, string> = {
   live: 'Listening — races recorded by anyone show up here straight away.',
-  connecting: 'Reconnecting to the live channel…',
+  connecting: 'Catching up on the live channel…',
+  paused: 'Paused while this tab is idle. Click or switch back to it to catch up.',
   offline: 'Not connected. This board may be out of date.',
 };
 
@@ -255,7 +256,13 @@ function LiveIndicator() {
       ? { label: 'Live', filled: true, accent: 'var(--plasma)' }
       : status === 'connecting'
         ? { label: 'Syncing', filled: false, accent: 'var(--text-dim)' }
-        : { label: 'Offline', filled: false, accent: 'var(--text-faint)' };
+        : status === 'paused'
+          ? // Its own word, not 'Offline'. The tab stopped on purpose because
+            // nobody was using it, and saying 'Offline' would report a fault
+            // where there isn't one — which is the exact confusion this
+            // indicator exists to clear up.
+            { label: 'Paused', filled: false, accent: 'var(--text-dim)' }
+          : { label: 'Offline', filled: false, accent: 'var(--text-faint)' };
 
   // A tooltip, not a dialog: it takes itself away. Re-armed on a status change
   // so the message you're reading is never one state behind.

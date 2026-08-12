@@ -7,17 +7,16 @@ import { JwtPayload, SESSION_COOKIE } from '../auth/jwt.strategy';
 /**
  * Reads the session outside Nest's guard pipeline.
  *
- * The guards work on controller routes, but two things that aren't controller
- * routes still have to answer "is this request authenticated?":
+ * The guards work on controller routes, and the SPA is not one: it is served by
+ * plain Express middleware that has to answer "is this request authenticated?"
+ * before it hands over a single byte of the bundle (see serve-spa.ts).
  *
- *  - the SPA, served by plain Express middleware, before it hands over a single
- *    byte of the bundle (see serve-spa.ts);
- *  - the WebSocket upgrade at /api/live, which Express never sees at all
- *    (see live.gateway.ts).
+ * There used to be a second caller — the WebSocket upgrade at /api/live, which
+ * Express never saw at all. Polling replaced it with an ordinary guarded route,
+ * so the live channel now authenticates the same way everything else does.
  *
- * Both work from the raw request headers, so that's what this reads — not
- * `request.cookies`, which only exists once cookie-parser has run and therefore
- * is always empty on an upgrade. It intentionally matches
+ * It works from the raw request headers rather than `request.cookies`, which
+ * only exists once cookie-parser has run. It intentionally matches
  * JwtStrategy.validate(): verify the token, then confirm the racer still exists
  * in the database, so a deleted account can't keep browsing or stay subscribed.
  */

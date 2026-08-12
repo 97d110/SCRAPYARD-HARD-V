@@ -1,0 +1,21 @@
+# What never needs to reach a deployment.
+#
+# Secrets first, and not because Vercel would necessarily read them — the build
+# gets its configuration from the project's environment variables — but because
+# an .env file that rides along in the upload is a copy of every credential
+# sitting somewhere nobody thinks to look. The deployment has no use for one.
+.env
+.env.*
+apps/api/.env
+apps/api/.env.*
+
+# Build inputs and tooling that only ever run on a laptop. The art pipeline
+# needs Python and ImageMagick and produces files that are committed already.
+assets-src/
+scripts/
+docs/
+
+# Built on Vercel by `npm run build`, so uploading a local copy only risks
+# shipping a stale one.
+apps/api/dist/
+apps/web/dist/
